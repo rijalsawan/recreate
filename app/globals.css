@@ -1,26 +1,112 @@
 @import "tailwindcss";
 
+@plugin "tailwindcss-animate";
+
+/*
+  Design System Variables
+  AESTHETIC: Dark-first design. Clean, flat surfaces — no heavy gradients, no glassmorphism overuse.
+*/
+
+@theme {
+  --color-background: #0A0A0A;
+  --color-card: #111111;
+  --color-elevated: #1A1A1A;
+  
+  --color-border: #2A2A2A;
+  --color-border-hover: #3A3A3A;
+  
+  --color-primary: #7C3AED;
+  --color-primary-hover: #6D28D9;
+  
+  --color-secondary: #06B6D4;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444; /* red-500 */
+  
+  --color-text-primary: #FAFAFA;
+  --color-text-muted: #A1A1AA;
+  --color-text-subtle: #52525B;
+
+  /* Typography Scale */
+  --font-sans: "Inter", "Geist", "Arial", sans-serif;
+  --font-heading: "Plus Jakarta Sans", "Syne", sans-serif;
+  --font-display: "Syne", sans-serif;
+  --font-mono: "Space Mono", monospace;
+
+  --text-display: 4.5rem; /* Syne Bold */
+  --text-h1: 3rem; /* Syne SemiBold */
+  --text-h2: 2.25rem; /* Plus Jakarta Sans SemiBold */
+  --text-h3: 1.5rem; /* Plus Jakarta Sans Medium */
+  --text-body: 1rem; /* Inter Regular */
+  --text-small: 0.875rem; /* Inter */
+
+  --spacing-section-y: 7rem;
+  --spacing-section-x: clamp(1.5rem, 5vw, 6rem);
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: var(--color-background);
+  --foreground: var(--color-text-primary);
+  
+  --card: var(--color-card);
+  --card-foreground: var(--color-text-primary);
+  
+  --popover: var(--color-elevated);
+  --popover-foreground: var(--color-text-primary);
+
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-text-primary);
+  
+  --secondary: var(--color-secondary);
+  --secondary-foreground: var(--color-text-primary);
+
+  --muted: var(--color-elevated);
+  --muted-foreground: var(--color-text-muted);
+
+  --accent: var(--color-card);
+  --accent-foreground: var(--color-text-primary);
+
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-primary);
+
+  --radius: 0.75rem; /* xl */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
   }
 }
 
+* {
+  border-color: var(--border);
+}
+
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Animations and transitions */
+.page-transition-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-transition-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.hover-lift {
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+}
+.hover-lift:hover {
+  transform: scale(1.02);
+  border-color: var(--color-border-hover);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05); /* ring-1 ring-white/5 */
 }
