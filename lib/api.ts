@@ -1,10 +1,7 @@
-import { GenerationResponse } from '../types/tool.types';
-import { CreditsResponse, UserProfile } from '../types/user.types';
-
 const API_BASE = '/api';
 
 class ApiClient {
-  private async fetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers: {
@@ -15,14 +12,13 @@ class ApiClient {
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.message || 'An error occurred with the API request.');
+      throw new Error(errorData.error || errorData.message || `API error ${res.status}`);
     }
 
     return res.json() as Promise<T>;
   }
 
-  // Uses FormData for file uploads + prompt data (where applicable)
-  private async fetchFormData<T>(endpoint: string, formData: FormData): Promise<T> {
+  private async upload<T>(endpoint: string, formData: FormData): Promise<T> {
     const res = await fetch(`${API_BASE}${endpoint}`, {
       method: 'POST',
       body: formData,
@@ -30,28 +26,148 @@ class ApiClient {
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.message || 'An error occurred with the file upload.');
+      throw new Error(errorData.error || errorData.message || `Upload error ${res.status}`);
     }
 
     return res.json() as Promise<T>;
   }
 
-  // Tools
-  async generateTextToImage(payload: { prompt: string; model: string; style?: string; size?: string }): Promise<GenerationResponse[]> {
-    // Stub implementation that would typically map to POST /images/generations
-    return this.fetch<GenerationResponse[]>('/generate', {
+  // ─── Generation ─────────────────────────────────────────────────────────
+  async generate(payload: {
+    prompt: string;
+    model?: string;
+    style?: string;
+    size?: string;
+    n?: number;
+    projectId?: string;
+    controls?: unknown;
+  }) {
+    return this.request('/generate', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
-  async removeBackground(formData: FormData): Promise<GenerationResponse> {
-    return this.fetchFormData<GenerationResponse>('/remove-bg', formData);
+  // ─── Editing ────────────────────────────────────────────────────────────
+  async imageToImage(formData: FormData) {
+    return this.upload('/edit/image-to-image', formData);
   }
 
-  // Users
-  async getUserProfile(): Promise<UserProfile> {
-    return this.fetch<UserProfile>('/users/me');
+  async eraseRegion(formData: FormData) {
+    return this.upload('/edit/erase-region', formData);
+  }
+
+  async inpaint(formData: FormData) {
+    return this.upload('/edit/inpaint', formData);
+  }
+
+  async replaceBackground(formData: FormData) {
+    return this.upload('/edit/replace-background', formData);
+  }
+
+  // ─── Tools ──────────────────────────────────────────────────────────────
+  async vectorize(formData: FormData) {
+    return this.upload('/tools/vectorize', formData);
+  }
+
+  async removeBackground(formData: FormData) {
+    return this.upload('/tools/remove-background', formData);
+  }
+
+  async upscale(formData: FormData) {
+    return this.upload('/tools/upscale', formData);
+  }
+
+  // ─── Projects ───────────────────────────────────────────────────────────
+  async listProjects() {
+    return this.request('/projects');
+  }
+
+  async getProject(id: string) {
+    return this.request(`/projects/${encodeURIComponent(id)}`);
+  }
+
+  async createProject(data: { name?: string; canvasData?: unknown }) {
+    return this.request('/projects', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProject(id: string, data: { name?: string; canvasData?: unknown; thumbnail?: string }) {
+    return this.request(`/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProject(id: string) {
+    return this.request(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  // ─── Canvas Elements ──────────────────────────────────────────────────
+  async listElements(projectId: string) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/elements`);
+  }
+
+  async createElement(projectId: string, data: Record<string, unknown>) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/elements`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateElements(projectId: string, elements: Record<string, unknown>[]) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/elements`, {
+      method: 'PATCH',
+      body: JSON.stringify({ elements }),
+    });
+  }
+
+  async deleteElement(projectId: string, elementId?: string) {
+    const query = elementId ? `?elementId=${encodeURIComponent(elementId)}` : '';
+    return this.request(`/projects/${encodeURIComponent(projectId)}/elements${query}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ─── User ──────────────────────────────────────────────────────────────
+  async getUserProfile() {
+    return this.request('/user/profile');
+  }
+
+  async getCredits(limit?: number) {
+    const query = limit ? `?limit=${limit}` : '';
+    return this.request(`/user/credits${query}`);
+  }
+
+  // ─── Images ─────────────────────────────────────────────────────────────
+  async listImages(cursor?: string, limit?: number) {
+    const params = new URLSearchParams();
+    if (cursor) params.set('cursor', cursor);
+    if (limit) params.set('limit', String(limit));
+    const query = params.toString() ? `?${params}` : '';
+    return this.request(`/images${query}`);
+  }
+
+  // ─── Palettes & Styles ─────────────────────────────────────────────────
+  async listPalettes() {
+    return this.request('/palettes');
+  }
+
+  async createPalette(data: { name?: string; colors: string[]; isExtracted?: boolean }) {
+    return this.request('/palettes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listStyles() {
+    return this.request('/styles');
+  }
+
+  async createStyle(formData: FormData) {
+    return this.upload('/styles', formData);
   }
 }
 

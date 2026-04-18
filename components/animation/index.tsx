@@ -13,7 +13,7 @@ import {
 import Image from "next/image";
 
 /* ─── shared constants ─── */
-const EASE: number[] = [0.16, 1, 0.3, 1];
+const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
 /* ═══════════════════════════════════════════
    1. FadeUp

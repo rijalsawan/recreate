@@ -1,0 +1,208 @@
+// Recraft Clone — Prisma Schema
+// Covers: NextAuth v5 models, Projects, Canvas Elements, Generated Images,
+// Color Palettes, Styles, Credit Transactions
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth Models (NextAuth v5 / Auth.js) ────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  credits       Int       @default(100)
+  plan          Plan      @default(FREE)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+  projects          Project[]
+  generatedImages   GeneratedImage[]
+  colorPalettes     ColorPalette[]
+  styles            Style[]
+  creditTransactions CreditTransaction[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── App Models ─────────────────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String   @default("Untitled")
+  userId      String
+  thumbnail   String?
+  canvasData  Json?    // Full canvas state (elements, viewport, etc.)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  canvasElements  CanvasElement[]
+  generatedImages GeneratedImage[]
+
+  @@index([userId])
+}
+
+enum ElementType {
+  FRAME
+  TEXT
+  SHAPE
+  IMAGE
+}
+
+model CanvasElement {
+  id         String      @id @default(cuid())
+  projectId  String
+  type       ElementType
+  properties Json        // Type-specific data (font, fill, stroke, src, etc.)
+  positionX  Float       @default(0)
+  positionY  Float       @default(0)
+  width      Float       @default(100)
+  height     Float       @default(100)
+  rotation   Float       @default(0)
+  zIndex     Int         @default(0)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+enum ImageFormat {
+  RASTER
+  VECTOR
+}
+
+model GeneratedImage {
+  id           String      @id @default(cuid())
+  userId       String
+  projectId    String?
+  prompt       String?
+  model        String      // e.g. "recraftv4", "recraftv4_vector"
+  style        String?
+  imageUrl     String
+  thumbnailUrl String?
+  width        Int?
+  height       Int?
+  format       ImageFormat @default(RASTER)
+  creditsUsed  Int
+  metadata     Json?       // Any extra Recraft response data
+  createdAt    DateTime    @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([projectId])
+}
+
+model ColorPalette {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   @default("Untitled Palette")
+  colors    Json     // Array of hex strings, e.g. ["#FF0000", "#00FF00"]
+  isExtracted Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Style {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  baseStyle      String?  // The base Recraft style used as foundation
+  sourceImages   Json?    // Array of image URLs used to create the style
+  recraftStyleId String?  // ID returned from Recraft API after style creation
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum TransactionType {
+  GENERATION
+  EDIT
+  TOOL
+  PURCHASE
+  BONUS
+}
+
+model CreditTransaction {
+  id          String          @id @default(cuid())
+  userId      String
+  amount      Int             // Negative = deduction, Positive = purchase/bonus
+  type        TransactionType
+  description String?
+  relatedImageId String?
+  createdAt   DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Global style cover cache — shared across all users.
+// Stores AI-generated cover images keyed by styleKey (e.g. "Enterprise__recraftv4").
+// imageUrl stores a base64 data URL (data:image/png;base64,...).
+model StyleCover {
+  styleKey  String   @id // e.g. "Enterprise__recraftv4"
+  imageUrl  String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
