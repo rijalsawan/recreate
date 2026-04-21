@@ -2330,7 +2330,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [upscaleModel, setUpscaleModel] = useState('Recraft Crisp');
   const [variationsCount, setVariationsCount] = useState(2);
   const [variationsRatio, setVariationsRatio] = useState('1:1');
-  const [editAreaPrompt, setEditAreaPrompt] = useState('');
   const [outpaintPrompt, setOutpaintPrompt] = useState('');
 
   // Per-image color adjustments — read from selected image, write via updater
@@ -2579,37 +2578,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     setShowFrameMenu(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pushHistory]);
-
-  // ── AI Action: Edit Area → Modify Area ──────────────────────────────────
-  const handleModifyArea = useCallback(async () => {
-    if (!selectedImage || !maskCanvasRef.current || isProcessing) return;
-    setIsProcessing(true);
-    try {
-      const rawMaskBlob = await getMaskBlob(maskCanvasRef.current);
-      const { imageFile, maskFile } = await compressImageAndMaskForUpload(selectedImage.url, rawMaskBlob);
-      const fd = new FormData();
-      fd.append('image', imageFile);
-      fd.append('mask', maskFile);
-      fd.append('prompt', editAreaPrompt || 'Modify this area creatively');
-      const res = await fetch('/api/edit/inpaint', { method: 'POST', body: fd });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Inpaint failed');
-      const data = await res.json();
-      const url = data.image?.imageUrl || '';
-      // Replace the existing frame in-place — this is a modification of the same image
-      setCanvasImages((prev) => {
-        const next = prev.map((img) => img.id === selectedImage!.id ? { ...img, url } : img);
-        pushHistory('Modified area', next);
-        return next;
-      });
-      clearMask();
-      setActiveSubPanel(null);
-      toast.success('Area modified');
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to modify area');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [selectedImage, isProcessing, editAreaPrompt, getMaskBlob]);
 
   // ── AI Action: Edit Area → Erase with AI ───────────────────────────────
   const handleEraseWithAI = useCallback(async () => {
@@ -3996,29 +3964,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onMouseEnter={() => setToolCursor((prev) => (prev.visible ? { ...prev, visible: false } : prev))}
             onMouseLeave={() => setToolCursor((prev) => (isCanvasCustomCursorMode && !prev.visible ? { ...prev, visible: true } : prev))}
           >
-            <div className="bg-[#111113]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-80">
-              <input
-                value={editAreaPrompt}
-                onChange={(e) => setEditAreaPrompt(e.target.value)}
-                placeholder="Describe what to change..."
-                className="w-full bg-white/5 border border-white/8 rounded-xl px-3 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-              />
-              <div className="flex gap-2">
-                <button
-                  disabled={!hasMask || isProcessing}
-                  onClick={handleModifyArea}
-                  className="flex-1 bg-white/8 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed text-[13px] font-semibold py-2.5 rounded-xl transition-colors border border-white/8 text-foreground"
-                >
-                  {isProcessing ? 'Processing...' : 'Modify area'}
-                </button>
-                <button
-                  disabled={!hasMask || isProcessing}
-                  onClick={handleEraseWithAI}
-                  className="flex-1 bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black text-[13px] font-semibold py-2.5 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
-                >
-                  {isProcessing ? 'Processing...' : 'Erase with AI'}
-                </button>
-              </div>
+            <div className="bg-[#111113]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl">
+              <button
+                disabled={!hasMask || isProcessing}
+                onClick={handleEraseWithAI}
+                className="bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black text-[13px] font-semibold py-2.5 px-5 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
+              >
+                {isProcessing ? 'Erasing...' : 'Erase with AI'}
+              </button>
             </div>
           </div>
         )}

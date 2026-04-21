@@ -76,7 +76,7 @@ export default function LandingPage() {
                   <AnimatedWordRotator words={['Designers.', 'Marketers.', 'Agencies.', 'Creators.']} />
                 </h1>
                 <p className="text-lg md:text-xl text-muted-foreground max-w-xl leading-relaxed font-light">
-                  A radically new workspace combining 15 professional generation, inpainting, and vectorization tools. No complex prompting required.
+                  A radically new workspace combining 15 professional generation, erase, and vectorization tools. No complex prompting required.
                 </p>
               </BlurIn>
 
@@ -174,7 +174,7 @@ export default function LandingPage() {
                 </div>
                 <div className="flex items-center gap-3 p-2 rounded-lg bg-transparent hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/10">
                   <Layers className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs font-medium text-muted-foreground">Inpaint Area</span>
+                  <span className="text-xs font-medium text-muted-foreground">Erase with AI</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 rounded-lg bg-transparent hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/10">
                   <LucideIcons.Combine className="w-4 h-4 text-success" />
@@ -351,10 +351,10 @@ export default function LandingPage() {
               </div>
               <h2 className="text-h2 font-display font-bold text-white">Edit with Precision</h2>
               <p className="text-lg text-muted-foreground leading-relaxed">
-                Leave Photoshop behind. Paint a mask directly on your canvas to seamlessly inpaint new elements, erase unwanted regions, or generate entirely new environments around your subject.
+                Leave Photoshop behind. Paint a mask directly on your canvas to erase unwanted regions or generate entirely new environments around your subject — AI fills the gap seamlessly.
               </p>
               <Button variant="outline" className="w-fit mt-4 rounded-full group" asChild>
-                <Link href="/edit/inpaint">Explore Inpainting <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" /></Link>
+                <Link href="/dashboard">Start Erasing <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" /></Link>
               </Button>
             </div>
             <div className="relative rounded-2xl border border-border bg-surface aspect-square lg:aspect-auto lg:h-[500px] overflow-hidden p-8 flex items-center justify-center">
@@ -366,7 +366,7 @@ export default function LandingPage() {
                     <path d="M40 30 Q50 60 70 40 Q80 20 60 10 Z" fill="currentColor" filter="blur(4px)" />
                  </svg>
                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/80 backdrop-blur text-white text-xs font-bold px-3 py-1 rounded-full border border-white/20 whitespace-nowrap z-10">
-                   "Add a vintage camera"
+                   Erase with AI
                  </div>
                </div>
             </div>
