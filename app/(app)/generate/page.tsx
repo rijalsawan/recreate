@@ -8,12 +8,10 @@ import { TOOLS } from '@/config/tools.config';
 import { ToolLayout } from '@/components/tools/ToolLayout';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
 import { useToolStore } from '@/stores/useToolStore';
 import { useUserStore } from '@/stores/useUserStore';
 import { toast } from 'sonner';
 import { Loader2, Download, RefreshCcw, Save } from 'lucide-react';
-import { api } from '@/lib/api';
 
 const generateSchema = z.object({
   prompt: z.string().min(3, 'Prompt must be at least 3 characters').max(1000, 'Keep prompt under 1000 characters'),
@@ -24,6 +22,18 @@ const generateSchema = z.object({
 });
 
 type GenerateValues = z.infer<typeof generateSchema>;
+
+const MODEL_LABELS: Record<string, string> = {
+  recraftv4: 'Recraft V4',
+  recraftv4_vector: 'Recraft V4 Vector',
+  recraftv4_pro: 'Recraft V4 Pro',
+  recraftv4_pro_vector: 'Recraft V4 Pro Vector',
+  recraftv3: 'Recraft V3',
+  recraftv3_vector: 'Recraft V3 Vector',
+  recraftv2: 'Recraft V2',
+  recraftv2_vector: 'Recraft V2 Vector',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash (Free)',
+};
 
 const GenerateTool = () => {
   const tool = TOOLS['generate'];
@@ -63,8 +73,9 @@ const GenerateTool = () => {
       setResults((prev) => [...res, ...prev]);
       deductCredits(tool.creditsPerGeneration);
       toast.success('Image generated!', { description: 'Your masterpiece is ready.'});
-    } catch (e: any) {
-      toast.error('Generation failed', { description: e.message || 'Please try again later.' });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Please try again later.';
+      toast.error('Generation failed', { description: message });
     } finally {
       setIsGenerating(false);
     }
@@ -96,7 +107,7 @@ const GenerateTool = () => {
             className="h-10 px-3 py-2 bg-surface border border-border rounded-md text-sm outline-none focus:border-primary"
           >
             {tool.supportedModels.map(m => (
-              <option key={m} value={m}>{m === 'recraftv4' ? 'Recraft V4 Pro' : 'Recraft V3'}</option>
+              <option key={m} value={m}>{MODEL_LABELS[m] || m}</option>
             ))}
           </select>
         </div>

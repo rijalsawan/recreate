@@ -12,6 +12,35 @@ interface NormalizedResponse {
   data: { url: string }[];
 }
 
+export class OpenAIRequestError extends Error {
+  status: number;
+  code?: string;
+  type?: string;
+  requestId?: string;
+  providerMessage?: string;
+
+  constructor(args: {
+    status: number;
+    message: string;
+    code?: string;
+    type?: string;
+    requestId?: string;
+    providerMessage?: string;
+  }) {
+    super(args.message);
+    this.name = 'OpenAIRequestError';
+    this.status = args.status;
+    this.code = args.code;
+    this.type = args.type;
+    this.requestId = args.requestId;
+    this.providerMessage = args.providerMessage;
+  }
+}
+
+export function isOpenAIRequestError(error: unknown): error is OpenAIRequestError {
+  return error instanceof OpenAIRequestError;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function b64ToDataUrl(b64: string, format = 'png'): string {
@@ -77,8 +106,32 @@ async function openaiRequest(endpoint: string, body: FormData | Record<string, u
   });
 
   if (!res.ok) {
+    const requestId = res.headers.get('x-request-id') || undefined;
     const text = await res.text().catch(() => '');
-    throw new Error(`OpenAI API error ${res.status}: ${text}`);
+
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+
+    const providerError = (parsed && typeof parsed === 'object' ? (parsed as { error?: unknown }).error : null) as
+      | { message?: unknown; type?: unknown; code?: unknown }
+      | null;
+
+    const providerMessage = typeof providerError?.message === 'string'
+      ? providerError.message
+      : (text || `OpenAI request failed with status ${res.status}`);
+
+    throw new OpenAIRequestError({
+      status: res.status,
+      message: `OpenAI API error ${res.status}: ${providerMessage}`,
+      code: typeof providerError?.code === 'string' ? providerError.code : undefined,
+      type: typeof providerError?.type === 'string' ? providerError.type : undefined,
+      requestId,
+      providerMessage,
+    });
   }
 
   return res.json();

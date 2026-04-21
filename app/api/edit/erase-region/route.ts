@@ -1,31 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession, requireCredits } from '@/lib/api-helpers';
+import { getAuthSession } from '@/lib/api-helpers';
 import { recraft } from '@/lib/recraft';
 import { mockEraseRegion } from '@/lib/recraft-mock';
 import { openaiEraseRegion } from '@/lib/openai';
-import { prisma } from '@/lib/prisma';
-import { deductCredits } from '@/lib/credits';
+import { prisma, withPrismaRetry } from '@/lib/prisma';
+import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
 import { RECRAFT_PRICING } from '@/types/recraft.types';
-import sharp from 'sharp';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+import { normalizeMaskForTarget } from '@/lib/edit-mask';
 
 const HAS_OPENAI = !!process.env.OPENAI_API_KEY;
 const HAS_RECRAFT = !!process.env.RECRAFT_API_KEY;
 const USE_MOCK = !HAS_RECRAFT && !HAS_OPENAI;
-
-/**
- * Convert any PNG/JPEG mask to a true grayscale PNG (color type 0).
- * Recraft eraseRegion rejects RGBA PNGs even if they look grayscale.
- */
-async function toGrayscalePng(maskFile: File): Promise<File> {
-  const buf = Buffer.from(await maskFile.arrayBuffer());
-  const grayscaleBuf = await sharp(buf)
-    .flatten({ background: { r: 0, g: 0, b: 0 } })
-    .toColourspace('b-w')
-    .threshold(128)
-    .png()
-    .toBuffer();
-  return new File([new Uint8Array(grayscaleBuf)], 'mask.png', { type: 'image/png' });
-}
 
 export async function POST(request: NextRequest) {
   const [session, error] = await getAuthSession();
@@ -40,40 +26,57 @@ export async function POST(request: NextRequest) {
   }
 
   const cost = RECRAFT_PRICING.erase_region;
-  // Credit check disabled for testing with mock service
-  // const creditsError = await requireCredits(session.user.id, cost);
-  // if (creditsError) return creditsError;
-
-  // Recraft requires a true grayscale PNG — convert server-side since
-  // the browser canvas always emits RGBA PNG regardless of pixel values.
-  const grayscaleMask = HAS_RECRAFT ? await toGrayscalePng(mask) : mask;
-
-  const result = HAS_RECRAFT
-    ? await recraft.eraseRegion({ image, mask: grayscaleMask })
-    : HAS_OPENAI
-      ? await openaiEraseRegion(image, mask)
-      : await mockEraseRegion();
-
-  console.log('[erase-region] Recraft response keys:', Object.keys(result));
-
-  // Recraft edit endpoints return { image: { url } }, generation returns { data: [{ url }] }
-  const imageUrl =
-    result.data?.[0]?.url ||
-    (result as unknown as { image?: { url?: string } }).image?.url ||
-    '';
-
-  const saved = await prisma.generatedImage.create({
-    data: {
-      userId: session.user.id,
-      projectId: (formData.get('projectId') as string) || null,
-      model: 'erase_region',
-      imageUrl,
-      format: 'RASTER',
-      creditsUsed: cost,
-    },
+  const billingGuard = await guardUsage({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsRequired: cost,
   });
+  if (!billingGuard.ok) {
+    return NextResponse.json(billingGuard.payload, { status: billingGuard.status });
+  }
 
-  // await deductCredits(session.user.id, cost, 'EDIT', 'Erase region');
+  try {
+    let result;
+    if (HAS_RECRAFT) {
+      const normalizedMask = await normalizeMaskForTarget(image, mask, 'recraft');
+      result = await recraft.eraseRegion({ image, mask: normalizedMask });
+    } else if (HAS_OPENAI) {
+      const normalizedMask = await normalizeMaskForTarget(image, mask, 'openai');
+      result = await openaiEraseRegion(image, normalizedMask);
+    } else {
+      result = await mockEraseRegion();
+    }
 
-  return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
+    // Recraft edit endpoints return { image: { url } }, generation returns { data: [{ url }] }
+    let imageUrl =
+      result.data?.[0]?.url ||
+      (result as unknown as { image?: { url?: string } }).image?.url ||
+      '';
+    try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/edits' }); } catch {}
+
+    const saved = await withPrismaRetry(() => prisma.generatedImage.create({
+      data: {
+        userId: session.user.id,
+        projectId: (formData.get('projectId') as string) || null,
+        model: 'erase_region',
+        imageUrl,
+        format: 'RASTER',
+        creditsUsed: cost,
+      },
+    }));
+
+    await withPrismaRetry(() => consumeUsageAndCredits({
+      userId: session.user.id,
+      operation: 'edit',
+      creditsUsed: cost,
+      transactionType: 'EDIT',
+      description: 'Erase region',
+      relatedImageId: saved.id,
+    }));
+
+    return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to erase region';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

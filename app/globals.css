@@ -90,6 +90,21 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
+body.global-custom-cursor,
+body.global-custom-cursor * {
+  cursor: none !important;
+}
+
+body.global-custom-cursor [data-allow-native-cursor="true"],
+body.global-custom-cursor [data-allow-native-cursor="true"] * {
+  cursor: auto !important;
+}
+
 /* Animations and transitions */
 .page-transition-enter {
   opacity: 0;

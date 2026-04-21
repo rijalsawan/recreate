@@ -5,17 +5,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Sparkles, Plus, FolderOpen, Layers, Users, Star, History,
-  UserCircle, Zap, ChevronDown, X, MoreHorizontal, Pencil,
-  Trash2, ExternalLink, Search, SortAsc, Globe, BookOpen,
-  LogOut, ChevronRight, ImageIcon, Loader2
+  Sparkles, Plus, Users, ChevronDown, X, MoreHorizontal, Pencil,
+  Trash2, ExternalLink, Search, SortAsc, ChevronRight, ImageIcon, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useUserStore } from '@/stores/useUserStore';
-import { signOut } from 'next-auth/react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
+import { WorkspaceSidebarShell } from '@/components/layout/WorkspaceSidebarShell';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,53 +27,11 @@ interface Project {
 type SortOption = 'Last opened' | 'Last created' | 'Alphabetically';
 type TabOption = 'My projects' | 'Shared by me' | 'Shared with me' | 'Featured projects';
 
-// ─── Sidebar Nav Item ─────────────────────────────────────────────────────────
-
-function SidebarItem({
-  icon,
-  label,
-  active,
-  onClick,
-  href,
-  badge,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
-  href?: string;
-  badge?: string;
-}) {
-  const cls = cn(
-    'flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer select-none',
-    active
-      ? 'bg-white/10 text-white'
-      : 'text-muted-foreground hover:text-white hover:bg-white/5'
-  );
-  if (href) {
-    return (
-      <Link href={href} className={cls}>
-        <span className="shrink-0 w-5 h-5 flex items-center justify-center">{icon}</span>
-        <span className="flex-1">{label}</span>
-        {badge && (
-          <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded-full">
-            {badge}
-          </span>
-        )}
-      </Link>
-    );
-  }
-  return (
-    <button className={cls} onClick={onClick}>
-      <span className="shrink-0 w-5 h-5 flex items-center justify-center">{icon}</span>
-      <span className="flex-1 text-left">{label}</span>
-      {badge && (
-        <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded-full">
-          {badge}
-        </span>
-      )}
-    </button>
-  );
+function getProjectScope(tab: TabOption): 'my' | 'shared-by-me' | 'shared-with-me' | null {
+  if (tab === 'My projects') return 'my';
+  if (tab === 'Shared by me') return 'shared-by-me';
+  if (tab === 'Shared with me') return 'shared-with-me';
+  return null;
 }
 
 // ─── Project Card ─────────────────────────────────────────────────────────────
@@ -325,7 +280,6 @@ function NewProjectModal({
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const { user } = useUserStore();
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -337,10 +291,18 @@ export default function ProjectsPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // ── Fetch projects ──────────────────────────────────────────────────────────
-  const fetchProjects = useCallback(async () => {
+  const fetchProjects = useCallback(async (tab: TabOption) => {
+    const scope = getProjectScope(tab);
+
+    if (!scope) {
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
-      const res = await fetch('/api/projects');
+      const res = await fetch(`/api/projects?scope=${scope}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setProjects(data);
@@ -352,8 +314,19 @@ export default function ProjectsPage() {
   }, []);
 
   useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
+    fetchProjects(activeTab);
+  }, [activeTab, fetchProjects]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('new') !== '1') return;
+
+    setShowNewModal(true);
+    const nextUrl = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, '', nextUrl);
+  }, []);
 
   // ── Create project ──────────────────────────────────────────────────────────
   const handleCreate = async (name: string) => {
@@ -380,7 +353,7 @@ export default function ProjectsPage() {
       toast.success('Project deleted');
     } catch {
       toast.error('Failed to delete project');
-      fetchProjects(); // re-sync
+      fetchProjects(activeTab); // re-sync
     }
   };
 
@@ -396,7 +369,7 @@ export default function ProjectsPage() {
       if (!res.ok) throw new Error();
     } catch {
       toast.error('Failed to rename project');
-      fetchProjects();
+      fetchProjects(activeTab);
     }
   };
 
@@ -416,117 +389,8 @@ export default function ProjectsPage() {
   const sortOptions: SortOption[] = ['Last opened', 'Last created', 'Alphabetically'];
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      {/* ── Sidebar ── */}
-      <aside className="w-[220px] shrink-0 border-r border-border bg-background flex flex-col h-full">
-        {/* Logo */}
-        <div className="p-4 border-b border-border/50">
-          <Link href="/" className="flex items-center gap-2 group mb-4">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-display font-bold text-base text-white">Recraft SaaS</span>
-          </Link>
-          <Button
-            className="w-full rounded-xl font-bold text-sm h-9 gap-2 shadow-[0_0_20px_-5px_rgba(124,58,237,0.4)]"
-            onClick={() => setShowNewModal(true)}
-          >
-            <Plus className="w-4 h-4" />
-            Create new project
-          </Button>
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto p-3 flex flex-col gap-0.5">
-          <SidebarItem
-            icon={<FolderOpen className="w-4 h-4" />}
-            label="Projects"
-            active
-            onClick={() => {}}
-          />
-          <SidebarItem
-            icon={<Layers className="w-4 h-4" />}
-            label="Editing templates"
-            href="/projects"
-          />
-          <SidebarItem
-            icon={<Globe className="w-4 h-4" />}
-            label="Community"
-            href="#"
-          />
-          <SidebarItem
-            icon={<BookOpen className="w-4 h-4" />}
-            label="Styles"
-            href="/styles"
-          />
-          <SidebarItem
-            icon={<Star className="w-4 h-4" />}
-            label="Favorites"
-            onClick={() => toast.info('Favorites coming soon')}
-          />
-          <SidebarItem
-            icon={<History className="w-4 h-4" />}
-            label="History"
-            href="/history"
-          />
-
-          <div className="h-px bg-border my-2" />
-
-          <SidebarItem
-            icon={<UserCircle className="w-4 h-4" />}
-            label="Profile"
-            href="/account"
-          />
-          <SidebarItem
-            icon={<Zap className="w-4 h-4" />}
-            label="What's new"
-            badge="NEW"
-            onClick={() => toast.info("You're on the latest version")}
-          />
-        </nav>
-
-        {/* Bottom */}
-        <div className="p-3 border-t border-border flex flex-col gap-2">
-          <Button
-            variant="outline"
-            className="w-full rounded-xl font-bold text-sm h-9 gap-2 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
-            onClick={() => router.push('/pricing')}
-          >
-            <Zap className="w-4 h-4" />
-            Upgrade subscription
-          </Button>
-
-          <div className="flex items-center gap-2.5 px-1 py-1 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group">
-            <div className="w-8 h-8 rounded-full overflow-hidden border border-border shrink-0">
-              {user?.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.avatarUrl} alt={user.name ?? 'User'} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs uppercase">
-                  {user?.name?.[0] ?? 'U'}
-                </div>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user?.name ?? 'Guest'}</p>
-              <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Sparkles className="w-2.5 h-2.5 text-primary" />
-                {user?.credits?.toLocaleString() ?? 0} credits
-              </p>
-            </div>
-            <button
-              onClick={() => signOut({ callbackUrl: '/' })}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-white"
-              title="Sign out"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* ── Main Content ── */}
-      <main className="flex-1 overflow-hidden flex flex-col">
+    <WorkspaceSidebarShell activeSection="projects" onCreateProject={() => setShowNewModal(true)}>
+      <main className="h-full overflow-hidden flex flex-col">
         {/* NEW MODEL Banner */}
         <AnimatePresence>
           {!bannerDismissed && (
@@ -651,18 +515,16 @@ export default function ProjectsPage() {
 
         {/* Projects Grid */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          {activeTab !== 'My projects' ? (
+          {activeTab === 'Featured projects' ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
               <div className="w-14 h-14 rounded-2xl bg-elevated border border-border flex items-center justify-center">
                 <Users className="w-6 h-6 text-muted-foreground" />
               </div>
               <p className="text-sm font-semibold text-white">
-                {activeTab === 'Featured projects' ? 'Featured projects coming soon' : 'Nothing shared yet'}
+                Featured projects coming soon
               </p>
               <p className="text-xs text-muted-foreground max-w-xs">
-                {activeTab === 'Featured projects'
-                  ? 'We\'re curating the best community projects. Check back soon.'
-                  : 'Projects you share or receive from collaborators will appear here.'}
+                We\'re curating the best community projects. Check back soon.
               </p>
             </div>
           ) : loading ? (
@@ -674,11 +536,10 @@ export default function ProjectsPage() {
               layout
               className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
             >
-              {/* Create card always first */}
-              <CreateCard onClick={() => setShowNewModal(true)} />
+              {activeTab === 'My projects' && <CreateCard onClick={() => setShowNewModal(true)} />}
 
               <AnimatePresence>
-                {sortedProjects.length === 0 && !searchQuery ? (
+                {sortedProjects.length === 0 ? (
                   /* Empty state shown inline */
                   <motion.div
                     key="empty"
@@ -686,7 +547,15 @@ export default function ProjectsPage() {
                     animate={{ opacity: 1 }}
                     className="col-span-full flex flex-col items-center justify-center py-16 gap-3 text-center"
                   >
-                    <p className="text-sm text-muted-foreground">No projects yet. Create your first one!</p>
+                    <p className="text-sm text-muted-foreground">
+                      {searchQuery
+                        ? 'No projects match your search.'
+                        : activeTab === 'Shared by me'
+                          ? 'Projects you share will appear here.'
+                          : activeTab === 'Shared with me'
+                            ? 'Projects shared with you will appear here.'
+                            : 'No projects yet. Create your first one!'}
+                    </p>
                   </motion.div>
                 ) : (
                   sortedProjects.map((project) => (
@@ -710,6 +579,6 @@ export default function ProjectsPage() {
         onClose={() => setShowNewModal(false)}
         onCreate={handleCreate}
       />
-    </div>
+    </WorkspaceSidebarShell>
   );
 }

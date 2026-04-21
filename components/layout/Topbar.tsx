@@ -42,7 +42,7 @@ export const Topbar = () => {
           <Bell className="w-5 h-5" />
           <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full animate-pulse" />
         </Button>
-        <Link href="/account">
+        <Link href="/profile">
           <Button variant="outline" size="sm" className="gap-2 rounded-full hidden sm:flex border-border bg-elevated hover:bg-white/5">
             <span className="text-primary font-bold">⚡ 1,250</span>
             <span className="text-muted-foreground font-medium">Credits</span>

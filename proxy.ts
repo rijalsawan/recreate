@@ -7,9 +7,10 @@ export function proxy(request: NextRequest) {
     request.cookies.get('__Secure-authjs.session-token')?.value;
 
   const { pathname } = request.nextUrl;
+  const isPublicApiRoute = pathname === '/api/webhooks/stripe';
 
   // Protected routes — redirect to home if unauthenticated
-  const protectedPaths = ['/project', '/dashboard', '/generate', '/edit', '/tools', '/projects'];
+  const protectedPaths = ['/project', '/dashboard', '/generate', '/edit', '/tools', '/projects', '/profile', '/shared'];
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p));
 
   if (isProtected && !token) {
@@ -20,7 +21,7 @@ export function proxy(request: NextRequest) {
   }
 
   // API routes (except auth) — return 401 if unauthenticated
-  if (pathname.startsWith('/api') && !pathname.startsWith('/api/auth') && !token) {
+  if (pathname.startsWith('/api') && !pathname.startsWith('/api/auth') && !isPublicApiRoute && !token) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -35,6 +36,8 @@ export const config = {
     '/edit/:path*',
     '/tools/:path*',
     '/projects/:path*',
+    '/profile/:path*',
+    '/shared/:path*',
     '/api/((?!auth).*)' ,
   ],
 };

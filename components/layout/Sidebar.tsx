@@ -1,14 +1,16 @@
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { TOOLS_LIST } from '@/config/tools.config';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { CreditsBar } from '@/components/shared/CreditsBar';
+import { PricingModal } from '@/components/shared/PricingModal';
 import * as LucideIcons from 'lucide-react';
 import { useLayoutStore } from '@/stores/useLayoutStore';
+import { useUserStore } from '@/stores/useUserStore';
 
 const LucideIcon = ({ name, className }: { name: string, className?: string }) => {
   const IconNames: Record<string, any> = {
@@ -35,6 +37,9 @@ const LucideIcon = ({ name, className }: { name: string, className?: string }) =
 export const Sidebar = () => {
   const pathname = usePathname();
   const { isSidebarCollapsed, toggleSidebar } = useLayoutStore();
+  const { user } = useUserStore();
+  const [showPricingModal, setShowPricingModal] = useState(false);
+  const isPaidPlan = user?.plan && user.plan !== 'free';
 
   const generateTools = TOOLS_LIST.filter(t => t.category === 'generate');
   const editTools = TOOLS_LIST.filter(t => t.category === 'edit');
@@ -99,13 +104,25 @@ export const Sidebar = () => {
 
       <div className="p-4 border-t border-border mt-auto flex flex-col gap-4">
         {!isSidebarCollapsed && <CreditsBar />}
-        <Link href="/account" className={cn("flex items-center gap-3 rounded-lg transition-colors hover:bg-white/5 p-2", isSidebarCollapsed ? "justify-center -mx-2" : "-mx-2")}>
+        {!isPaidPlan && !isSidebarCollapsed && (
+          <Button
+            variant="outline"
+            className="w-full rounded-xl font-bold text-sm h-9 gap-2 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
+            onClick={() => setShowPricingModal(true)}
+          >
+            <LucideIcons.Zap className="w-4 h-4" />
+            Upgrade
+          </Button>
+        )}
+          <Link href="/profile" className={cn("flex items-center gap-3 rounded-lg transition-colors hover:bg-white/5 p-2", isSidebarCollapsed ? "justify-center -mx-2" : "-mx-2")}>
           <div className="w-8 h-8 rounded-full bg-elevated border border-border flex items-center justify-center shrink-0">
              <LucideIcon name="user" className="w-4 h-4 text-muted-foreground" />
           </div>
           {!isSidebarCollapsed && <span className="font-medium text-sm">My Account</span>}
         </Link>
       </div>
+
+      <PricingModal isOpen={showPricingModal} onClose={() => setShowPricingModal(false)} />
     </div>
   );
 };

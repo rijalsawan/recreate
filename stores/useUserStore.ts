@@ -21,7 +21,13 @@ export const useUserStore = create<UserStore>((set, get) => ({
         const data = await res.json();
         const { user } = get();
         if (user) {
-          set({ user: { ...user, credits: data.credits } });
+          set({
+            user: {
+              ...user,
+              credits: typeof data.credits === 'number' ? data.credits : user.credits,
+              plan: (data.plan as 'free' | 'pro' | 'business') || user.plan,
+            },
+          });
         }
       }
     } catch {

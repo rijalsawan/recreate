@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession, requireCredits } from '@/lib/api-helpers';
+import { getAuthSession } from '@/lib/api-helpers';
 import { recraft } from '@/lib/recraft';
 import { mockImageToImage } from '@/lib/recraft-mock';
 import { openaiImageToImage } from '@/lib/openai';
 import { prisma } from '@/lib/prisma';
-import { deductCredits } from '@/lib/credits';
+import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
 import { RECRAFT_PRICING } from '@/types/recraft.types';
 import type { RecraftModel, RecraftStyle } from '@/types/recraft.types';
+import { uploadToCloudinary } from '@/lib/cloudinary';
 
 const HAS_OPENAI = !!process.env.OPENAI_API_KEY;
 const HAS_RECRAFT = !!process.env.RECRAFT_API_KEY;
@@ -25,11 +26,17 @@ export async function POST(request: NextRequest) {
   }
 
   const cost = RECRAFT_PRICING.image_to_image;
-  // Credit check disabled for testing with mock service
-  // const creditsError = await requireCredits(session.user.id, cost);
-  // if (creditsError) return creditsError;
-
   const model = (formData.get('model') as string) || '';
+
+  const billingGuard = await guardUsage({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsRequired: cost,
+    model: model || undefined,
+  });
+  if (!billingGuard.ok) {
+    return NextResponse.json(billingGuard.payload, { status: billingGuard.status });
+  }
 
   // Image-to-image is a Recraft-native operation — always use Recraft when available
   const result = HAS_RECRAFT
@@ -44,10 +51,11 @@ export async function POST(request: NextRequest) {
       ? await openaiImageToImage(image, prompt)
       : await mockImageToImage();
 
-  const imageUrl =
+  let imageUrl =
     result.data?.[0]?.url ||
     (result as unknown as { image?: { url?: string } }).image?.url ||
     '';
+  try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/edits' }); } catch {}
 
   const saved = await prisma.generatedImage.create({
     data: {
@@ -62,7 +70,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // await deductCredits(session.user.id, cost, 'EDIT', 'Image to image transformation');
+  await consumeUsageAndCredits({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsUsed: cost,
+    transactionType: 'EDIT',
+    description: 'Image to image transformation',
+    relatedImageId: saved.id,
+  });
 
   return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
 }

@@ -27,6 +27,15 @@ model User {
   image         String?
   credits       Int       @default(100)
   plan          Plan      @default(FREE)
+  stripeCustomerId String? @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId String?
+  subscriptionStatus String?
+  subscriptionCurrentPeriodEnd DateTime?
+  subscriptionCancelAtPeriodEnd Boolean @default(false)
+  dailyFreeActionsUsed Int @default(0)
+  dailyUploadsUsed Int @default(0)
+  dailyFreeResetAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -37,6 +46,7 @@ model User {
   colorPalettes     ColorPalette[]
   styles            Style[]
   creditTransactions CreditTransaction[]
+  projectShares     ProjectShare[]
 }
 
 model Account {
@@ -83,14 +93,39 @@ model Project {
   userId      String
   thumbnail   String?
   canvasData  Json?    // Full canvas state (elements, viewport, etc.)
+  sharedSourceShareId String?
+  sharedByUserId      String?
+  isSharedClone       Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  canvasElements  CanvasElement[]
-  generatedImages GeneratedImage[]
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  canvasElements    CanvasElement[]
+  generatedImages   GeneratedImage[]
+  sourceShares      ProjectShare[]   @relation("ProjectShareSource")
+  sharedSourceShare ProjectShare?    @relation("ProjectShareClone", fields: [sharedSourceShareId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([sharedSourceShareId])
+  @@index([userId, sharedSourceShareId])
+}
+
+model ProjectShare {
+  id        String   @id @default(cuid())
+  projectId String
+  ownerId   String
+  token     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project        Project   @relation("ProjectShareSource", fields: [projectId], references: [id], onDelete: Cascade)
+  owner          User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  clonedProjects Project[] @relation("ProjectShareClone")
+
+  @@unique([projectId, ownerId])
+  @@index([ownerId])
+  @@index([projectId])
 }
 
 enum ElementType {
@@ -205,4 +240,25 @@ model StyleCover {
   imageUrl  String   @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Global Google Font library — shared across all users.
+// Managed via /addfonts admin page.
+model CanvasFont {
+  id        String   @id @default(cuid())
+  family    String   @unique // Google Font family name, e.g. "Pacifico"
+  category  String   // serif, sans-serif, display, handwriting, monospace
+  variants  Json     // Array of weight numbers, e.g. [400, 700]
+  createdAt DateTime @default(now())
+}
+
+model BillingWebhookEvent {
+  id        String   @id @default(cuid())
+  provider  String
+  eventId   String
+  eventType String
+  createdAt DateTime @default(now())
+
+  @@unique([provider, eventId], name: "provider_eventId")
+  @@index([eventType])
 }

@@ -10,6 +10,7 @@ import { TOOLS_LIST } from '@/config/tools.config';
 import * as LucideIcons from 'lucide-react';
 import { AnimatedWordRotator } from '@/components/ui/animated-text';
 import { useAuthModal } from '@/stores/useAuthModal';
+import { PUBLIC_PLAN_CARDS } from '@/lib/plans';
 
 /* --- Quick Animation Helpers (Mimicking Reactbits) --- */
 const FadeIn = ({ children, delay = 0, className }: any) => (
@@ -69,7 +70,7 @@ export default function LandingPage() {
               </BlurIn>
 
               <BlurIn delay={0.3} className="space-y-4">
-                <h1 className="text-[3.5rem] lg:text-[4.5rem] leading-[1.05] font-display font-bold tracking-tight text-white">
+                <h1 className="text-[3.5rem] lg:text-display leading-[1.05] font-display font-bold tracking-tight text-white">
                   The AI suite for
                   <br />
                   <AnimatedWordRotator words={['Designers.', 'Marketers.', 'Agencies.', 'Creators.']} />
@@ -441,36 +442,39 @@ export default function LandingPage() {
           </div>
 
           <div className="grid lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {[
-              { name: 'Starter', price: 'Free', credits: '50 Credits / mo', features: ['Standard Tools', 'Recraft V3 Access', 'Community Support'] },
-              { name: 'Pro', price: '$20/mo', credits: '1,500 Credits / mo', popular: true, features: ['All 15 Tools', 'Recraft V4 Pro Access', 'Commercial Rights', 'Priority Generation', 'Vector Exports'] },
-              { name: 'Business', price: '$99/mo', credits: '10,000 Credits / mo', features: ['Everything in Pro', 'Custom Style Training', 'Team Seats', 'API Access', 'White-glove Support'] }
-            ].map((tier, i) => (
-              <FadeIn key={tier.name} delay={i * 0.15} className={cn(
+            {PUBLIC_PLAN_CARDS.map((plan, i) => (
+              <FadeIn key={plan.slug} delay={i * 0.15} className={cn(
                 "flex flex-col p-8 rounded-3xl border transition-colors relative",
-                tier.popular ? "bg-surface border-primary shadow-[0_0_40px_-15px_rgba(124,58,237,0.3)]" : "bg-elevated border-border"
+                plan.highlighted ? "bg-surface border-primary shadow-[0_0_40px_-15px_rgba(124,58,237,0.3)]" : "bg-elevated border-border"
               )}>
-                {tier.popular && (
+                {plan.highlighted && (
                   <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-white text-xs font-bold uppercase tracking-wider py-1 px-4 rounded-full">
                     Most Popular
                   </div>
                 )}
-                <h3 className="text-xl font-bold text-white mb-2">{tier.name}</h3>
+                <h3 className="text-xl font-bold text-white mb-2">{plan.name}</h3>
                 <div className="mb-6 flex items-baseline gap-2">
-                  <span className="text-4xl font-display font-bold text-white">{tier.price}</span>
+                  <span className="text-4xl font-display font-bold text-white">
+                    {plan.monthlyPrice === 0 ? 'Free' : `$${plan.monthlyPrice}`}
+                  </span>
+                  {plan.monthlyPrice > 0 && <span className="text-muted-foreground text-base">/mo</span>}
                 </div>
                 <div className="p-3 rounded-lg bg-white/5 border border-white/10 mb-8 inline-block w-fit text-sm font-medium text-primary">
-                  ⚡ {tier.credits}
+                  ⚡ {plan.creditsLabel}
                 </div>
                 <ul className="flex flex-col gap-4 mb-8 flex-1">
-                  {tier.features.map(f => (
+                  {plan.features.map(f => (
                     <li key={f} className="flex items-start gap-3 text-sm text-white">
                       <Check className="w-5 h-5 text-primary shrink-0 -mt-0.5" /> {f}
                     </li>
                   ))}
                 </ul>
-                <Button variant={tier.popular ? 'default' : 'outline'} className={cn("w-full rounded-full h-12 font-bold", tier.popular ? 'text-base shadow-lg shadow-primary/20' : '')} asChild>
-                  <Link href="/signup">{tier.popular ? 'Get Started' : 'Start Free'}</Link>
+                <Button
+                  variant={plan.highlighted ? 'default' : 'outline'}
+                  className={cn("w-full rounded-full h-12 font-bold", plan.highlighted ? 'text-base shadow-lg shadow-primary/20' : '')}
+                  onClick={() => openModal('signup')}
+                >
+                  {plan.ctaLabel}
                 </Button>
               </FadeIn>
             ))}

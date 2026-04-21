@@ -64,7 +64,12 @@ class RecraftService {
     if (params.substyle) form.append('substyle', params.substyle);
     if (params.n) form.append('n', String(params.n));
     if (params.response_format) form.append('response_format', params.response_format);
-    if (params.strength !== undefined) form.append('strength', String(params.strength));
+    // Recraft image-to-image requires strength; default high for context-preserving edits.
+    const normalizedStrength =
+      params.strength !== undefined && Number.isFinite(params.strength)
+        ? Math.max(0, Math.min(1, params.strength))
+        : 0.8;
+    form.append('strength', String(normalizedStrength));
 
     return this.formRequest('/images/imageToImage', form);
   }

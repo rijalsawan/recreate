@@ -3,6 +3,10 @@ import { getAuthSession } from '@/lib/api-helpers';
 import { mockGenerateImage } from '@/lib/recraft-mock';
 import { openaiOutpaint } from '@/lib/openai';
 import { prisma } from '@/lib/prisma';
+import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
+import { RECRAFT_PRICING } from '@/types/recraft.types';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+import { normalizeMaskForTarget } from '@/lib/edit-mask';
 
 const HAS_OPENAI = !!process.env.OPENAI_API_KEY;
 
@@ -19,29 +23,56 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'image (padded) and mask are required' }, { status: 400 });
   }
 
-  let result;
-  if (HAS_OPENAI) {
-    result = await openaiOutpaint(image, mask, prompt);
-  } else {
-    result = await mockGenerateImage({ prompt: prompt || 'outpaint', size: '1024x1024', n: 1 });
+  const cost = RECRAFT_PRICING.image_to_image;
+
+  const billingGuard = await guardUsage({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsRequired: cost,
+  });
+  if (!billingGuard.ok) {
+    return NextResponse.json(billingGuard.payload, { status: billingGuard.status });
   }
 
-  const imageUrl =
-    result.data?.[0]?.url ||
-    (result as unknown as { image?: { url?: string } }).image?.url ||
-    '';
+  try {
+    let result;
+    if (HAS_OPENAI) {
+      const normalizedMask = await normalizeMaskForTarget(image, mask, 'openai');
+      result = await openaiOutpaint(image, normalizedMask, prompt);
+    } else {
+      result = await mockGenerateImage({ prompt: prompt || 'outpaint', size: '1024x1024', n: 1 });
+    }
 
-  const saved = await prisma.generatedImage.create({
-    data: {
+    let imageUrl =
+      result.data?.[0]?.url ||
+      (result as unknown as { image?: { url?: string } }).image?.url ||
+      '';
+    try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/edits' }); } catch {}
+
+    const saved = await prisma.generatedImage.create({
+      data: {
+        userId: session.user.id,
+        projectId: (formData.get('projectId') as string) || null,
+        prompt: prompt || 'Outpaint expansion',
+        model: 'outpaint',
+        imageUrl,
+        format: 'RASTER',
+        creditsUsed: cost,
+      },
+    });
+
+    await consumeUsageAndCredits({
       userId: session.user.id,
-      projectId: (formData.get('projectId') as string) || null,
-      prompt: prompt || 'Outpaint expansion',
-      model: 'outpaint',
-      imageUrl,
-      format: 'RASTER',
-      creditsUsed: 0,
-    },
-  });
+      operation: 'edit',
+      creditsUsed: cost,
+      transactionType: 'EDIT',
+      description: 'Outpaint edit',
+      relatedImageId: saved.id,
+    });
 
-  return NextResponse.json({ image: saved, imageUrl, creditsUsed: 0 });
+    return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to outpaint image';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession, requireCredits } from '@/lib/api-helpers';
+import { getAuthSession } from '@/lib/api-helpers';
 import { recraft } from '@/lib/recraft';
 import { mockUpscale } from '@/lib/recraft-mock';
 import { openaiUpscale } from '@/lib/openai';
 import { prisma } from '@/lib/prisma';
-import { deductCredits } from '@/lib/credits';
+import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
 import { RECRAFT_PRICING } from '@/types/recraft.types';
+import { uploadToCloudinary } from '@/lib/cloudinary';
 
 const HAS_OPENAI = !!process.env.OPENAI_API_KEY;
 const HAS_RECRAFT = !!process.env.RECRAFT_API_KEY;
@@ -24,9 +25,15 @@ export async function POST(request: NextRequest) {
   }
 
   const cost = type === 'creative' ? RECRAFT_PRICING.creative_upscale : RECRAFT_PRICING.crisp_upscale;
-  // Credit check disabled for testing with mock service
-  // const creditsError = await requireCredits(session.user.id, cost);
-  // if (creditsError) return creditsError;
+  const billingGuard = await guardUsage({
+    userId: session.user.id,
+    operation: 'tool',
+    creditsRequired: cost,
+    feature: type === 'creative' ? 'creative_upscale' : undefined,
+  });
+  if (!billingGuard.ok) {
+    return NextResponse.json(billingGuard.payload, { status: billingGuard.status });
+  }
 
   const result = HAS_RECRAFT
     ? type === 'creative'
@@ -36,10 +43,11 @@ export async function POST(request: NextRequest) {
       ? await openaiUpscale(image, type as 'crisp' | 'creative')
       : await mockUpscale();
 
-  const imageUrl =
+  let imageUrl =
     result.data?.[0]?.url ||
     (result as unknown as { image?: { url?: string } }).image?.url ||
     '';
+  try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/tools' }); } catch {}
 
   const saved = await prisma.generatedImage.create({
     data: {
@@ -52,7 +60,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // await deductCredits(session.user.id, cost, 'TOOL', `${type} upscale`);
+  await consumeUsageAndCredits({
+    userId: session.user.id,
+    operation: 'tool',
+    creditsUsed: cost,
+    transactionType: 'TOOL',
+    description: `${type} upscale`,
+    relatedImageId: saved.id,
+  });
 
   return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
 }

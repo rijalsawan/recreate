@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession, requireCredits } from '@/lib/api-helpers';
+import { getAuthSession } from '@/lib/api-helpers';
 import { recraft } from '@/lib/recraft';
 import { mockReplaceBackground } from '@/lib/recraft-mock';
 import { openaiReplaceBackground } from '@/lib/openai';
 import { prisma } from '@/lib/prisma';
-import { deductCredits } from '@/lib/credits';
+import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
 import { RECRAFT_PRICING } from '@/types/recraft.types';
 import type { RecraftModel, RecraftStyle } from '@/types/recraft.types';
+import { uploadToCloudinary } from '@/lib/cloudinary';
 
 const HAS_OPENAI = !!process.env.OPENAI_API_KEY;
 const HAS_RECRAFT = !!process.env.RECRAFT_API_KEY;
@@ -25,25 +26,34 @@ export async function POST(request: NextRequest) {
   }
 
   const cost = RECRAFT_PRICING.replace_background;
-  // Credit check disabled for testing with mock service
-  // const creditsError = await requireCredits(session.user.id, cost);
-  // if (creditsError) return creditsError;
+  const model = (formData.get('model') as string as RecraftModel) || undefined;
+
+  const billingGuard = await guardUsage({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsRequired: cost,
+    model,
+  });
+  if (!billingGuard.ok) {
+    return NextResponse.json(billingGuard.payload, { status: billingGuard.status });
+  }
 
   const result = HAS_RECRAFT
     ? await recraft.replaceBackground({
         image,
         prompt,
-        model: (formData.get('model') as string as RecraftModel) || undefined,
+        model,
         style: (formData.get('style') as string as RecraftStyle) || undefined,
       })
     : HAS_OPENAI
       ? await openaiReplaceBackground(image, prompt)
       : await mockReplaceBackground();
 
-  const imageUrl =
+  let imageUrl =
     result.data?.[0]?.url ||
     (result as unknown as { image?: { url?: string } }).image?.url ||
     '';
+  try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/edits' }); } catch {}
 
   const saved = await prisma.generatedImage.create({
     data: {
@@ -57,7 +67,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // await deductCredits(session.user.id, cost, 'EDIT', 'Replace background');
+  await consumeUsageAndCredits({
+    userId: session.user.id,
+    operation: 'edit',
+    creditsUsed: cost,
+    transactionType: 'EDIT',
+    description: 'Replace background',
+    relatedImageId: saved.id,
+  });
 
   return NextResponse.json({ image: saved, imageUrl, creditsUsed: cost });
 }

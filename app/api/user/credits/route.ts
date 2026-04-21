@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthSession } from '@/lib/api-helpers';
 import { prisma } from '@/lib/prisma';
+import { planToSlug } from '@/lib/plans';
 
 // GET /api/user/credits — get credit balance and recent transactions
 export async function GET(request: NextRequest) {
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     credits: user?.credits ?? 0,
-    plan: user?.plan ?? 'FREE',
+    plan: planToSlug(user?.plan),
     transactions,
   });
 }

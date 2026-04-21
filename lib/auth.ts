@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/prisma';
+import { planToSlug } from '@/lib/plans';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -20,25 +21,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        // First sign-in — attach DB fields to token
-        token.id = user.id;
+      const userId = user?.id || (token.id as string | undefined);
+
+      if (userId) {
+        token.id = userId;
+
         const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
+          where: { id: userId },
           select: { credits: true, plan: true },
         });
+
         if (dbUser) {
           token.credits = dbUser.credits;
-          token.plan = dbUser.plan;
+          token.plan = planToSlug(dbUser.plan);
         }
       }
+
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.id as string;
         session.user.credits = token.credits as number;
-        session.user.plan = token.plan as string;
+        session.user.plan = (token.plan as 'free' | 'pro' | 'business' | undefined) ?? 'free';
       }
       return session;
     },

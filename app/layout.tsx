@@ -3,6 +3,7 @@ import { Inter, Syne, Plus_Jakarta_Sans, Space_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { SessionProvider } from '@/components/providers/SessionProvider';
+import { GlobalCursor } from '@/components/ui/global-cursor';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {children}
           <AuthModal />
           <Toaster richColors theme="dark" position="bottom-right" />
+          <GlobalCursor />
         </SessionProvider>
       </body>
     </html>
