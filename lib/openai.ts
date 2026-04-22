@@ -1,6 +1,6 @@
 /**
  * OpenAI Image API service.
- * Uses gpt-image-1 for generation and editing.
+ * Uses gpt-image-1.5 for generation and editing.
  * Returns normalized responses matching Recraft's { data: [{ url }] } format.
  * Base64 images are returned as data URLs.
  */
@@ -72,20 +72,6 @@ function mapSize(size: string): string {
   return map[size] || 'auto';
 }
 
-// DALL-E 3 only supports 1024x1024, 1024x1792, 1792x1024
-function mapDalle3Size(size: string): string {
-  const map: Record<string, string> = {
-    '1024x1024': '1024x1024',
-    '1365x1024': '1792x1024',
-    '1024x1365': '1024x1792',
-    '1536x1024': '1792x1024',
-    '1024x1536': '1024x1792',
-    '1820x1024': '1792x1024',
-    '1024x1820': '1024x1792',
-  };
-  return map[size] || '1024x1024';
-}
-
 async function openaiRequest(endpoint: string, body: FormData | Record<string, unknown>, isForm = false) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -143,18 +129,16 @@ export async function openaiGenerate(
   prompt: string,
   size = '1024x1024',
   n = 1,
-  model = 'gpt-image-1',
+  model = 'gpt-image-1.5',
 ): Promise<NormalizedResponse> {
-  const isDalle3 = model === 'dall-e-3';
   const response = await openaiRequest('/images/generations', {
     model,
     prompt,
-    n: isDalle3 ? 1 : n, // DALL-E 3 only supports n=1
-    size: isDalle3 ? mapDalle3Size(size) : mapSize(size),
-    quality: isDalle3 ? 'standard' : 'low',
-    ...(isDalle3 ? {} : {}),
+    n,
+    size: mapSize(size),
+    quality: 'low',
   });
-  return normalizeResponse(response, 'png', isDalle3);
+  return normalizeResponse(response, 'png');
 }
 
 // ─── Edit / Inpaint (image + optional mask + prompt) ─────────────────────
@@ -166,7 +150,7 @@ export async function openaiEdit(
   size?: string,
 ): Promise<NormalizedResponse> {
   const form = new FormData();
-  form.append('model', 'gpt-image-1');
+  form.append('model', 'gpt-image-1.5');
   form.append('image[]', image);
   form.append('prompt', prompt);
   form.append('quality', 'low');
@@ -256,7 +240,7 @@ export async function openaiOutpaint(
   prompt: string,
 ): Promise<NormalizedResponse> {
   const expandPrompt = prompt.trim()
-    ? `Expand this image outward. The new areas should contain: ${prompt}. Make the expansion seamless.`
-    : 'Expand this image outward. Fill the new areas with content that naturally continues the scene. Make the expansion seamless.';
+    ? `Expand this image outward. New content must follow this request: ${prompt}. Only generate in transparent mask regions. Preserve the original central image exactly. Match perspective, lighting, texture, and color continuity from adjacent pixels so the extension looks native.`
+    : 'Expand this image outward. Only generate in transparent mask regions. Preserve the original central image exactly. Fill new regions by naturally continuing perspective, lighting, texture, and color from nearby image context.';
   return openaiEdit(image, expandPrompt, mask);
 }

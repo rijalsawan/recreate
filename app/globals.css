@@ -105,6 +105,12 @@ body.global-custom-cursor [data-allow-native-cursor="true"] * {
   cursor: auto !important;
 }
 
+/* Resize/drag handles — show the correct native cursor even in custom cursor mode */
+body.global-custom-cursor [data-cursor-override],
+body.global-custom-cursor [data-cursor-override] * {
+  cursor: var(--cursor-override) !important;
+}
+
 /* Animations and transitions */
 .page-transition-enter {
   opacity: 0;

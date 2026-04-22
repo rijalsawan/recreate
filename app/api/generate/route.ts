@@ -46,7 +46,7 @@ function isRecraftV4FamilyModel(model: string): boolean {
 }
 
 function isOpenAIModel(model: string): boolean {
-  return model === 'dall-e-3' || model === 'gpt-image-1';
+  return model === 'dall-e-3' || model === 'gpt-image-1' || model === 'gpt-image-1.5';
 }
 
 function isGeminiModel(model: string): model is GeminiModel {

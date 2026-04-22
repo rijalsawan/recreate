@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthSession } from '@/lib/api-helpers';
-import { mockGenerateImage } from '@/lib/recraft-mock';
 import { openaiOutpaint } from '@/lib/openai';
 import { prisma } from '@/lib/prisma';
 import { consumeUsageAndCredits, guardUsage } from '@/lib/billing.server';
@@ -23,6 +22,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'image (padded) and mask are required' }, { status: 400 });
   }
 
+  if (!HAS_OPENAI) {
+    return NextResponse.json(
+      { error: 'OpenAI is required for Expand with AI. Set OPENAI_API_KEY and try again.' },
+      { status: 503 },
+    );
+  }
+
   const cost = RECRAFT_PRICING.image_to_image;
 
   const billingGuard = await guardUsage({
@@ -35,19 +41,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    let result;
-    if (HAS_OPENAI) {
-      const normalizedMask = await normalizeMaskForTarget(image, mask, 'openai');
-      result = await openaiOutpaint(image, normalizedMask, prompt);
-    } else {
-      result = await mockGenerateImage({ prompt: prompt || 'outpaint', size: '1024x1024', n: 1 });
-    }
+    const normalizedMask = await normalizeMaskForTarget(image, mask, 'openai');
+    const result = await openaiOutpaint(image, normalizedMask, prompt);
 
-    let imageUrl =
+    const providerImageUrl =
       result.data?.[0]?.url ||
       (result as unknown as { image?: { url?: string } }).image?.url ||
       '';
-    try { if (imageUrl) imageUrl = await uploadToCloudinary(imageUrl, { folder: 'recreate/edits' }); } catch {}
+    if (!providerImageUrl) {
+      throw new Error('Outpaint returned no image URL');
+    }
+
+    const imageUrl = await uploadToCloudinary(providerImageUrl, { folder: 'recreate/edits' });
+    if (!imageUrl) {
+      throw new Error('Failed to store outpaint image');
+    }
 
     const saved = await prisma.generatedImage.create({
       data: {

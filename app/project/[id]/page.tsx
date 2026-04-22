@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -87,10 +87,8 @@ function mapApiModelToEditorModel(apiModel?: string): string | null {
       return 'Recraft V2';
     case 'recraftv2_vector':
       return 'Recraft V2 Vector';
-    case 'dall-e-3':
-      return 'DALL·E 3';
-    case 'gpt-image-1':
-      return 'GPT Image 1';
+    case 'gpt-image-1.5':
+      return 'GPT Image 1.5';
     case 'gemini-2.5-flash':
       return 'Gemini 2.5 Flash';
     default:
@@ -178,6 +176,41 @@ function buildPaletteControls(palette: string[]): { colors: Array<{ rgb: [number
   return { colors };
 }
 
+function getObjectCoverSourceRect(
+  naturalWidth: number,
+  naturalHeight: number,
+  displayWidth: number,
+  displayHeight: number,
+): { sx: number; sy: number; sWidth: number; sHeight: number } {
+  const nW = Math.max(1, naturalWidth);
+  const nH = Math.max(1, naturalHeight);
+  const dW = Math.max(1, displayWidth);
+  const dH = Math.max(1, displayHeight);
+
+  const coverScale = Math.max(dW / nW, dH / nH);
+  const sWidth = Math.min(nW, dW / coverScale);
+  const sHeight = Math.min(nH, dH / coverScale);
+  const sx = Math.max(0, (nW - sWidth) / 2);
+  const sy = Math.max(0, (nH - sHeight) / 2);
+
+  return { sx, sy, sWidth, sHeight };
+}
+
+function drawImageAsObjectCover(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  displayWidth: number,
+  displayHeight: number,
+) {
+  const rect = getObjectCoverSourceRect(
+    img.naturalWidth || displayWidth,
+    img.naturalHeight || displayHeight,
+    displayWidth,
+    displayHeight,
+  );
+  ctx.drawImage(img, rect.sx, rect.sy, rect.sWidth, rect.sHeight, 0, 0, displayWidth, displayHeight);
+}
+
 /**
  * Compresses an image URL to a JPEG at the given max-side dimension and quality.
  * Used before uploading images to AI tool routes to avoid exceeding the Recraft
@@ -229,6 +262,8 @@ async function compressImageForUpload(url: string, maxSide = 2048, quality = 0.9
 async function compressImageAndMaskForUpload(
   imageUrl: string,
   maskBlob: Blob,
+  displayWidth?: number,
+  displayHeight?: number,
   maxSide = 2048,
   quality = 0.9,
 ): Promise<{ imageFile: File; maskFile: File }> {
@@ -236,8 +271,21 @@ async function compressImageAndMaskForUpload(
     const img = document.createElement('img');
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      let w = img.naturalWidth;
-      let h = img.naturalHeight;
+      const visibleW = Math.max(1, Math.round(displayWidth ?? img.naturalWidth));
+      const visibleH = Math.max(1, Math.round(displayHeight ?? img.naturalHeight));
+
+      const visibleCanvas = document.createElement('canvas');
+      visibleCanvas.width = visibleW;
+      visibleCanvas.height = visibleH;
+      const visibleCtx = visibleCanvas.getContext('2d');
+      if (!visibleCtx) {
+        reject(new Error('Failed to create visible image canvas'));
+        return;
+      }
+      drawImageAsObjectCover(visibleCtx, img, visibleW, visibleH);
+
+      let w = visibleW;
+      let h = visibleH;
       if (w > maxSide || h > maxSide) {
         if (w >= h) { h = Math.round((h / w) * maxSide); w = maxSide; }
         else { w = Math.round((w / h) * maxSide); h = maxSide; }
@@ -246,7 +294,12 @@ async function compressImageAndMaskForUpload(
       const imgCanvas = document.createElement('canvas');
       imgCanvas.width = w;
       imgCanvas.height = h;
-      imgCanvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+      const imgCtx = imgCanvas.getContext('2d');
+      if (!imgCtx) {
+        reject(new Error('Failed to create compressed image canvas'));
+        return;
+      }
+      imgCtx.drawImage(visibleCanvas, 0, 0, w, h);
 
       // Load the processed mask blob as an image so we can rescale it to w×h
       const maskImg = document.createElement('img');
@@ -255,7 +308,13 @@ async function compressImageAndMaskForUpload(
         const scaledMask = document.createElement('canvas');
         scaledMask.width = w;
         scaledMask.height = h;
-        scaledMask.getContext('2d')!.drawImage(maskImg, 0, 0, w, h);
+        const scaledMaskCtx = scaledMask.getContext('2d');
+        if (!scaledMaskCtx) {
+          URL.revokeObjectURL(maskObjectUrl);
+          reject(new Error('Failed to create mask canvas'));
+          return;
+        }
+        scaledMaskCtx.drawImage(maskImg, 0, 0, w, h);
         URL.revokeObjectURL(maskObjectUrl);
 
         let imgBlob: Blob | null = null;
@@ -284,6 +343,10 @@ async function compressImageAndMaskForUpload(
     img.src = imageUrl;
   });
 }
+
+const PROMPT_ASSISTANT_STYLE_CHIPS = ['cinematic', 'photorealistic', 'editorial', 'minimalist', 'bold contrast'];
+const PROMPT_ASSISTANT_LIGHTING_CHIPS = ['soft daylight', 'golden hour', 'studio lighting', 'neon glow', 'dramatic shadows'];
+const PROMPT_ASSISTANT_COMPOSITION_CHIPS = ['close-up', 'wide shot', 'center composition', 'rule of thirds', 'clean background'];
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { user } = useUserStore();
@@ -623,6 +686,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }, [projectId]);
 
   const [prompt, setPrompt] = useState('');
+  const [promptHelperOpen, setPromptHelperOpen] = useState(false);
+  const [promptAssistantStyle, setPromptAssistantStyle] = useState('');
+  const [promptAssistantLighting, setPromptAssistantLighting] = useState('');
+  const [promptAssistantComposition, setPromptAssistantComposition] = useState('');
+  const [promptAssistantNegative, setPromptAssistantNegative] = useState('');
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showLogoMenu, setShowLogoMenu] = useState(false);
   const [canvasBg, setCanvasBg] = useState<'dots' | 'grid' | 'lines' | 'cross' | 'none'>('none');
@@ -665,8 +734,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // we never mutate brushStrokes mid-draw (avoids triggering auto-save at 60fps).
   const [livePreviewStroke, setLivePreviewStroke] = useState<{ mode: DrawMode; points: { x: number; y: number }[]; historyImageId: string | null } | null>(null);
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
-  const [dragStrokeRef, setDragStrokeRef] = useState<{ id: string; startX: number; startY: number; origOffsetX: number; origOffsetY: number } | null>(null);
-  const selectedStroke = brushStrokes.find((s) => s.id === selectedStrokeId) || null;
+  const dragStrokeRef = useRef<{ id: string; startX: number; startY: number; origOffsetX: number; origOffsetY: number; liveOffsetX: number; liveOffsetY: number } | null>(null);
+  const selectedStroke = useMemo(() => brushStrokes.find((s) => s.id === selectedStrokeId) ?? null, [brushStrokes, selectedStrokeId]);
   const isBrushStrokeSelected = !!selectedStroke;
 
   // Frame properties
@@ -693,9 +762,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const dragTextRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; liveX?: number; liveY?: number } | null>(null);
   const textElemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const imageElemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const strokeElemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const textEditStartRef = useRef<Map<string, string>>(new Map());
   const resizeRef = useRef<{ type: 'text' | 'image'; id: string; handle: string; startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; liveX?: number; liveY?: number; liveW?: number; liveH?: number } | null>(null);
-  const selectedText = canvasTexts.find((t) => t.id === selectedTextId) || null;
+  const selectedText = useMemo(() => canvasTexts.find((t) => t.id === selectedTextId) ?? null, [canvasTexts, selectedTextId]);
   const isTextSelected = !!selectedText;
 
   // Font library (loaded from /api/fonts)
@@ -725,11 +795,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // User can dismiss context (X button) without deselecting the image for editing.
   const [contextImageId, setContextImageId] = useState<string | null>(null);
   const [useFrameContext, setUseFrameContext] = useState(false);
-  const contextImage = canvasImages.find((img) => img.id === contextImageId) || null;
+  const contextImage = useMemo(() => canvasImages.find((img) => img.id === contextImageId) ?? null, [canvasImages, contextImageId]);
 
   // Model capabilities for the currently selected model
   const currentModelId = getModelId(selectedModel);
-  const isCurrentModelOpenAI = currentModelId === 'dall-e-3' || currentModelId === 'gpt-image-1';
+  const isCurrentModelOpenAI = currentModelId === 'gpt-image-1.5';
   const currentModelCaps = getModelCapabilities(selectedModel);
 
   const applyIncomingStyleSelection = useCallback((incoming: SelectedStyleMeta | null) => {
@@ -992,11 +1062,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   ) => {
     if (skipHistoryRef.current) return;
     const idx = historyIndexRef.current;
-    const nextImages = images ?? canvasImages;
-    const nextTexts = texts ?? canvasTexts;
-    const nextStrokes = strokes ?? brushStrokes;
-    const nextSelectedId = selId !== undefined ? selId : selectedImageId;
-    const nextSelectedStrokeId = strokeSelId !== undefined ? strokeSelId : selectedStrokeId;
+    const nextImages = images ?? canvasImagesRef.current;
+    const nextTexts = texts ?? canvasTextsRef.current;
+    const nextStrokes = strokes ?? brushStrokesRef.current;
+    const nextSelectedId = selId !== undefined ? selId : selectedImageIdRef.current;
+    const nextSelectedStrokeId = strokeSelId !== undefined ? strokeSelId : selectedStrokeIdRef.current;
     const nextHistoryImageId = historyImageId !== undefined ? historyImageId : nextSelectedId;
 
     // Trim any "future" entries when a new edit occurs after an undo
@@ -1035,20 +1105,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
     historyIndexRef.current = historyStackRef.current.length - 1;
     setHistoryVersion((v) => v + 1);
-  }, [canvasImages, canvasTexts, brushStrokes, selectedImageId, selectedStrokeId, buildHistorySignature]);
+  }, [buildHistorySignature]);
 
   const getTextHistoryImageId = useCallback((textId: string | null, textItems?: CanvasText[]) => {
     if (!textId) return null;
-    const source = textItems ?? canvasTexts;
+    const source = textItems ?? canvasTextsRef.current;
     return source.find((t) => t.id === textId)?.historyImageId ?? null;
-  }, [canvasTexts]);
+  }, []);
 
   const pushTextHistory = useCallback((label: string, textItems?: CanvasText[], textId?: string | null) => {
-    const nextTexts = textItems ?? canvasTexts;
+    const nextTexts = textItems ?? canvasTextsRef.current;
     const targetTextId = textId ?? selectedTextId;
     const historyImageId = getTextHistoryImageId(targetTextId ?? null, nextTexts);
-    pushHistory(label, canvasImages, targetTextId ?? null, nextTexts, historyImageId);
-  }, [canvasImages, canvasTexts, selectedTextId, getTextHistoryImageId, pushHistory]);
+    pushHistory(label, undefined, targetTextId ?? null, nextTexts, historyImageId);
+  }, [selectedTextId, getTextHistoryImageId, pushHistory]);
 
   const historyUndo = useCallback(() => {
     const idx = historyIndexRef.current;
@@ -1104,7 +1174,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const selectedImage = canvasImages.find((img) => img.id === selectedImageId) || null;
+  const selectedImage = useMemo(() => canvasImages.find((img) => img.id === selectedImageId) ?? null, [canvasImages, selectedImageId]);
   const isImageSelected = !!selectedImage;
   const isPanelActive = isFrameActive || isTextActive || isImageSelected || isBrushStrokeSelected || isTextSelected;
 
@@ -1159,6 +1229,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     panX: 0,
     panY: 0,
   });
+  // Stable refs for pushHistory — avoids recreating the callback on every canvas mutation
+  const canvasImagesRef = useRef<CanvasImage[]>([]);
+  const canvasTextsRef = useRef<CanvasText[]>([]);
+  const brushStrokesRef = useRef<BrushStroke[]>([]);
+  const selectedImageIdRef = useRef<string | null>(null);
+  const selectedStrokeIdRef = useRef<string | null>(null);
 
   const flushToolCursorPosition = useCallback(() => {
     toolCursorRafRef.current = null;
@@ -1207,9 +1283,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }, [cancelHandleHoverClear]);
 
   // Keep latest canvas snapshot available for unload/pagehide persistence.
+  // Also sync stable refs used by pushHistory to avoid callback cascade.
   useLayoutEffect(() => {
     latestPersistRef.current = { images: canvasImages, texts: canvasTexts, brushStrokes, zoom, panX, panY };
-  }, [canvasImages, canvasTexts, brushStrokes, zoom, panX, panY]);
+    canvasImagesRef.current = canvasImages;
+    canvasTextsRef.current = canvasTexts;
+    brushStrokesRef.current = brushStrokes;
+    selectedImageIdRef.current = selectedImageId;
+    selectedStrokeIdRef.current = selectedStrokeId;
+  }, [canvasImages, canvasTexts, brushStrokes, selectedImageId, selectedStrokeId, zoom, panX, panY]);
 
   useEffect(() => {
     return () => {
@@ -1383,6 +1465,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [areaPreview, setAreaPreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [lassoPreviewPoints, setLassoPreviewPoints] = useState<{ x: number; y: number }[]>([]);
   const [hasMask, setHasMask] = useState(false);
+  const [editAreaPrompt, setEditAreaPrompt] = useState('');
 
   // Processing state for AI actions
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1842,18 +1925,21 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         current.points = [start, { x: cx, y: cy }];
       }
       // Update live preview state (does not touch brushStrokes — avoids triggering auto-save)
-      setLivePreviewStroke({ mode: current.mode, points: [...current.points], historyImageId: current.historyImageId });
+      // Share the mutable points array directly — avoids O(n) spread copy on every frame
+      setLivePreviewStroke({ mode: current.mode, points: current.points, historyImageId: current.historyImageId });
       return;
     }
-    // Dragging a brush stroke
-    if (dragStrokeRef) {
-      const dx = (e.clientX - dragStrokeRef.startX) / liveZoom.current;
-      const dy = (e.clientY - dragStrokeRef.startY) / liveZoom.current;
-      setBrushStrokes((prev) => prev.map((s) =>
-        s.id === dragStrokeRef.id ? { ...s, offsetX: dragStrokeRef.origOffsetX + dx, offsetY: dragStrokeRef.origOffsetY + dy } : s
-      ));
+    // Dragging a brush stroke — write to DOM directly, flush to state on mouseup
+    if (dragStrokeRef.current) {
+      const dsr = dragStrokeRef.current;
+      const dx = (e.clientX - dsr.startX) / liveZoom.current;
+      const dy = (e.clientY - dsr.startY) / liveZoom.current;
+      dsr.liveOffsetX = dsr.origOffsetX + dx;
+      dsr.liveOffsetY = dsr.origOffsetY + dy;
+      const el = strokeElemRefs.current.get(dsr.id);
+      if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
     }
-  }, [activeTool, activeSubPanel, spaceHeld, isImageSelected, editAreaTool, isPanning, computeSnap, brushSize, dragStrokeRef, eraseDrawingAtPoint, queueToolCursorPosition]);
+  }, [activeTool, activeSubPanel, spaceHeld, isImageSelected, editAreaTool, isPanning, computeSnap, brushSize, eraseDrawingAtPoint, queueToolCursorPosition]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (outpaintHandleRef.current) {
@@ -1938,7 +2024,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       });
     }
     dragTextRef.current = null;
-    const finishedStrokeDrag = dragStrokeRef;
+    const finishedStrokeDrag = dragStrokeRef.current;
+    dragStrokeRef.current = null;
     const currentStrokeSession = brushStrokeRef.current;
     // Flush image drag position to React state (live updates went directly to DOM)
     if (dragRef.current?.liveX !== undefined && dragRef.current.liveY !== undefined) {
@@ -1953,17 +2040,22 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     panRef.current = null;
     setIsPanning(false);
     setSnapLines([]);
-    if (finishedStrokeDrag) {
-      const movedStroke = brushStrokes.find((stroke) => stroke.id === finishedStrokeDrag.id);
-      if (movedStroke) {
-        const movedDistance = Math.hypot(
-          movedStroke.offsetX - finishedStrokeDrag.origOffsetX,
-          movedStroke.offsetY - finishedStrokeDrag.origOffsetY,
-        );
-        if (movedDistance > 0.5) {
+    // Flush stroke drag position to React state (live updates went directly to DOM)
+    if (finishedStrokeDrag && finishedStrokeDrag.liveOffsetX !== undefined) {
+      const { id, origOffsetX, origOffsetY, liveOffsetX, liveOffsetY } = finishedStrokeDrag;
+      const el = strokeElemRefs.current.get(id);
+      if (el) el.style.transform = '';
+      const updatedStrokes = brushStrokesRef.current.map((s) =>
+        s.id === id ? { ...s, offsetX: liveOffsetX, offsetY: liveOffsetY } : s
+      );
+      setBrushStrokes(updatedStrokes);
+      const movedDistance = Math.hypot(liveOffsetX - origOffsetX, liveOffsetY - origOffsetY);
+      if (movedDistance > 0.5) {
+        const movedStroke = updatedStrokes.find((s) => s.id === id);
+        if (movedStroke) {
           const historyImageId = movedStroke.historyImageId ?? null;
           const moveLabel = (movedStroke.kind || 'brush') === 'brush' ? 'Moved brush stroke' : 'Moved shape';
-          pushHistory(moveLabel, canvasImages, historyImageId, canvasTexts, historyImageId, brushStrokes, movedStroke.id);
+          pushHistory(moveLabel, undefined, historyImageId, undefined, historyImageId, updatedStrokes, movedStroke.id);
         }
       }
     }
@@ -1995,11 +2087,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           historyImageId,
         };
         const drawLabel = current.mode === 'brush' ? 'Drew brush stroke' : `Drew ${current.mode}`;
-        setBrushStrokes((prev) => {
-          const next = [...prev, newStroke];
-          pushHistory(drawLabel, canvasImages, historyImageId, canvasTexts, historyImageId, next, newStroke.id);
-          return next;
-        });
+        setBrushStrokes((prev) => [...prev, newStroke]);
+        pushHistory(drawLabel, canvasImages, historyImageId, canvasTexts, historyImageId, [...brushStrokes, newStroke], newStroke.id);
         setSelectedStrokeId(newStroke.id);
       }
     }
@@ -2010,7 +2099,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     erasedDuringDragRef.current = false;
     brushStrokeRef.current = null;
     setLivePreviewStroke(null);
-    setDragStrokeRef(null);
 
     const isEditAreaCursorTool = activeSubPanel === 'edit-area'
       && isImageSelected
@@ -2023,7 +2111,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       }
       setToolCursor((prev) => (prev.visible ? { ...prev, visible: false } : prev));
     }
-  }, [brushDrawColor, brushDrawSize, shapeFillEnabled, pushHistory, canvasImages, canvasTexts, brushStrokes, selectedImageId, selectedStrokeId, dragStrokeRef, activeTool, activeSubPanel, spaceHeld, isImageSelected, editAreaTool]);
+  }, [brushDrawColor, brushDrawSize, shapeFillEnabled, pushHistory, canvasImages, canvasTexts, brushStrokes, selectedImageId, selectedStrokeId, activeTool, activeSubPanel, spaceHeld, isImageSelected, editAreaTool]);
 
   const handleCanvasMouseLeave = useCallback(() => {
     handleCanvasMouseUp();
@@ -2213,13 +2301,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Fit all images into view
   const fitToView = useCallback(() => {
-    if (canvasImages.length === 0) { setZoom(0.5); setPanX(0); setPanY(0); return; }
+    const images = canvasImagesRef.current;
+    if (images.length === 0) { setZoom(0.5); setPanX(0); setPanY(0); return; }
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const minX = Math.min(...canvasImages.map((img) => img.x));
-    const minY = Math.min(...canvasImages.map((img) => img.y));
-    const maxX = Math.max(...canvasImages.map((img) => img.x + img.width));
-    const maxY = Math.max(...canvasImages.map((img) => img.y + img.height));
+    // Single-pass bounding box (avoids 4 separate spread-map passes)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const img of images) {
+      if (img.x < minX) minX = img.x;
+      if (img.y < minY) minY = img.y;
+      if (img.x + img.width > maxX) maxX = img.x + img.width;
+      if (img.y + img.height > maxY) maxY = img.y + img.height;
+    }
     const contentW = maxX - minX;
     const contentH = maxY - minY;
     const padding = 120;
@@ -2231,7 +2324,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     setPanX(rect.width / 2 - centerX * newZoom);
     setPanY(rect.height / 2 - centerY * newZoom);
     setZoom(newZoom);
-  }, [canvasImages]);
+  }, []);
 
   const stepZoom = useCallback((direction: 'in' | 'out') => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -2582,10 +2675,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // ── AI Action: Edit Area → Erase with AI ───────────────────────────────
   const handleEraseWithAI = useCallback(async () => {
     if (!selectedImage || !maskCanvasRef.current || isProcessing) return;
+    setProcessingAction('erase-area');
     setIsProcessing(true);
     try {
       const rawMaskBlob = await getMaskBlob(maskCanvasRef.current);
-      const { imageFile, maskFile } = await compressImageAndMaskForUpload(selectedImage.url, rawMaskBlob);
+      const { imageFile, maskFile } = await compressImageAndMaskForUpload(
+        selectedImage.url,
+        rawMaskBlob,
+        selectedImage.width,
+        selectedImage.height,
+      );
       const fd = new FormData();
       fd.append('image', imageFile);
       fd.append('mask', maskFile);
@@ -2604,9 +2703,58 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     } catch (err: any) {
       toast.error(err.message || 'Failed to erase region');
     } finally {
+      setProcessingAction(null);
       setIsProcessing(false);
     }
-  }, [selectedImage, isProcessing, getMaskBlob, addResultToCanvas]);
+  }, [selectedImage, isProcessing, getMaskBlob, clearMask, pushHistory]);
+
+  // ── AI Action: Edit Area → Modify with AI ──────────────────────────────
+  const handleModifyAreaWithAI = useCallback(async () => {
+    if (!selectedImage || !maskCanvasRef.current || isProcessing) return;
+
+    const promptText = editAreaPrompt.trim();
+    if (!promptText) {
+      toast.error('Add a prompt first');
+      return;
+    }
+
+    setProcessingAction('modify-area');
+    setIsProcessing(true);
+    try {
+      const rawMaskBlob = await getMaskBlob(maskCanvasRef.current);
+      const { imageFile, maskFile } = await compressImageAndMaskForUpload(
+        selectedImage.url,
+        rawMaskBlob,
+        selectedImage.width,
+        selectedImage.height,
+      );
+
+      const fd = new FormData();
+      fd.append('image', imageFile);
+      fd.append('mask', maskFile);
+      fd.append('prompt', promptText);
+
+      const res = await fetch('/api/edit/inpaint', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Modify failed');
+
+      const data = await res.json();
+      const url = data.image?.imageUrl || '';
+      setCanvasImages((prev) => {
+        const next = prev.map((img) => img.id === selectedImage.id ? { ...img, url, prompt: promptText } : img);
+        pushHistory('Modified region', next);
+        return next;
+      });
+
+      clearMask();
+      setEditAreaPrompt('');
+      toast.success('Region modified');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to modify region');
+    } finally {
+      setProcessingAction(null);
+      setIsProcessing(false);
+    }
+  }, [selectedImage, isProcessing, editAreaPrompt, getMaskBlob, clearMask, pushHistory]);
 
   // ── AI Action: Remix Image ─────────────────────────────────────────────
   const handleRemix = useCallback(async () => {
@@ -2682,14 +2830,76 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         imgEl.src = selectedImage.url;
       });
 
-      // Padded image: draw original centered, rest black
+      const baseCanvas = document.createElement('canvas');
+      baseCanvas.width = selectedImage.width;
+      baseCanvas.height = selectedImage.height;
+      const baseCtx = baseCanvas.getContext('2d');
+      if (!baseCtx) throw new Error('Failed to create base outpaint canvas');
+      drawImageAsObjectCover(baseCtx, imgEl, selectedImage.width, selectedImage.height);
+
+      // Padded image: draw original centered, then extend edge pixels into
+      // expanded zones so the model receives strong local context.
       const padCanvas = document.createElement('canvas');
       padCanvas.width = newW;
       padCanvas.height = newH;
       const padCtx = padCanvas.getContext('2d')!;
-      padCtx.fillStyle = '#000000';
-      padCtx.fillRect(0, 0, newW, newH);
-      padCtx.drawImage(imgEl, expandL, expandT, selectedImage.width, selectedImage.height);
+      padCtx.drawImage(baseCanvas, expandL, expandT, selectedImage.width, selectedImage.height);
+
+      if (expandL > 0) {
+        padCtx.drawImage(baseCanvas, 0, 0, 1, selectedImage.height, 0, expandT, expandL, selectedImage.height);
+      }
+      if (expandR > 0) {
+        padCtx.drawImage(
+          baseCanvas,
+          Math.max(0, selectedImage.width - 1),
+          0,
+          1,
+          selectedImage.height,
+          expandL + selectedImage.width,
+          expandT,
+          expandR,
+          selectedImage.height,
+        );
+      }
+      if (expandT > 0) {
+        padCtx.drawImage(baseCanvas, 0, 0, selectedImage.width, 1, expandL, 0, selectedImage.width, expandT);
+      }
+      if (expandB > 0) {
+        padCtx.drawImage(
+          baseCanvas,
+          0,
+          Math.max(0, selectedImage.height - 1),
+          selectedImage.width,
+          1,
+          expandL,
+          expandT + selectedImage.height,
+          selectedImage.width,
+          expandB,
+        );
+      }
+
+      if (expandL > 0 && expandT > 0) {
+        padCtx.drawImage(baseCanvas, 0, 0, 1, 1, 0, 0, expandL, expandT);
+      }
+      if (expandR > 0 && expandT > 0) {
+        padCtx.drawImage(baseCanvas, Math.max(0, selectedImage.width - 1), 0, 1, 1, expandL + selectedImage.width, 0, expandR, expandT);
+      }
+      if (expandL > 0 && expandB > 0) {
+        padCtx.drawImage(baseCanvas, 0, Math.max(0, selectedImage.height - 1), 1, 1, 0, expandT + selectedImage.height, expandL, expandB);
+      }
+      if (expandR > 0 && expandB > 0) {
+        padCtx.drawImage(
+          baseCanvas,
+          Math.max(0, selectedImage.width - 1),
+          Math.max(0, selectedImage.height - 1),
+          1,
+          1,
+          expandL + selectedImage.width,
+          expandT + selectedImage.height,
+          expandR,
+          expandB,
+        );
+      }
 
       // Mask: opaque where original is, transparent where we want generation
       const maskCanvas = document.createElement('canvas');
@@ -2708,48 +2918,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       const fd = new FormData();
       fd.append('image', new File([padBlob], 'padded.png', { type: 'image/png' }));
       fd.append('mask', new File([maskBlob], 'mask.png', { type: 'image/png' }));
-      fd.append('prompt', outpaintPrompt || 'Expand the image naturally continuing the scene');
+      const contextAwareOutpaintPrompt = outpaintPrompt.trim().length > 0
+        ? `${outpaintPrompt.trim()}. Seamlessly continue the existing scene into only the transparent expansion area. Match perspective, lighting, color palette, subject identity, and texture from the original image. Do not alter the original central image region.`
+        : 'Seamlessly continue the existing scene into only the transparent expansion area. Match perspective, lighting, color palette, subject identity, and texture from the original image. Do not alter the original central image region.';
+      fd.append('prompt', contextAwareOutpaintPrompt);
 
       const res = await fetch('/api/edit/outpaint', { method: 'POST', body: fd });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Expand failed');
       const data = await res.json();
-      const generatedUrl = data.image?.imageUrl || '';
-
-      // ── Composite: paste original image on top of AI result ──────────────
-      // The AI may alter pixels in the "preserved" mask area; this guarantees
-      // the original content is pixel-perfect while only the expanded zone is AI-generated.
-      const resultEl = document.createElement('img');
-      resultEl.crossOrigin = 'anonymous';
-      await new Promise<void>((resolve) => {
-        resultEl.onload = () => resolve();
-        resultEl.onerror = () => resolve(); // fall back to raw result on CORS failure
-        resultEl.src = generatedUrl;
-      });
-
-      let finalUrl = generatedUrl;
-      try {
-        const compCanvas = document.createElement('canvas');
-        compCanvas.width = newW;
-        compCanvas.height = newH;
-        const compCtx = compCanvas.getContext('2d')!;
-        // Draw AI result (scaled to match target dimensions in case API resized)
-        compCtx.drawImage(resultEl, 0, 0, newW, newH);
-        // Paste original image on top at exact offset — restores original pixels
-        compCtx.drawImage(imgEl, expandL, expandT, selectedImage.width, selectedImage.height);
-
-        const compBlob = await new Promise<Blob>((resolve, reject) =>
-          compCanvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas toBlob failed'))), 'image/png')
-        );
-
-        const uploadFd = new FormData();
-        uploadFd.append('file', new File([compBlob], 'outpaint.png', { type: 'image/png' }));
-        const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadFd });
-        if (uploadRes.ok) {
-          const uploadData = await uploadRes.json();
-          finalUrl = uploadData.url || generatedUrl;
-        }
-      } catch {
-        // If compositing fails, fall back to raw AI result
+      const finalUrl = data.image?.imageUrl || '';
+      if (!finalUrl) {
+        throw new Error('Expand returned no image URL');
       }
 
       // Replace the existing frame in-place, updating dimensions and shifting position
@@ -2952,8 +3131,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     'Recraft V3 Vector': 'recraftv3_vector',
     'Recraft V2': 'recraftv2',
     'Recraft V2 Vector': 'recraftv2_vector',
-    'DALL·E 3': 'dall-e-3',
-    'GPT Image 1': 'gpt-image-1',
+    'GPT Image 1.5': 'gpt-image-1.5',
     'Gemini 2.5 Flash': 'gemini-2.5-flash',
     'Auto mode': 'recraftv4',
   };
@@ -3010,8 +3188,73 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     setPanY(rect.height / 2 - centerY * z);
   }, []);
 
+  const appendPromptAssistantValue = useCallback((current: string, incoming: string) => {
+    const currentTrimmed = current.trim();
+    const normalizedIncoming = incoming.trim();
+    if (!normalizedIncoming) return currentTrimmed;
+    if (!currentTrimmed) return normalizedIncoming;
+
+    const existing = currentTrimmed
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (existing.includes(normalizedIncoming.toLowerCase())) {
+      return currentTrimmed;
+    }
+
+    return `${currentTrimmed}, ${normalizedIncoming}`;
+  }, []);
+
+  const buildAssistantPrompt = useCallback((basePrompt: string) => {
+    const sections = [basePrompt.trim()];
+
+    if (promptAssistantStyle.trim()) {
+      sections.push(`Style direction: ${promptAssistantStyle.trim()}`);
+    }
+    if (promptAssistantLighting.trim()) {
+      sections.push(`Lighting: ${promptAssistantLighting.trim()}`);
+    }
+    if (promptAssistantComposition.trim()) {
+      sections.push(`Composition: ${promptAssistantComposition.trim()}`);
+    }
+    if (promptAssistantNegative.trim()) {
+      sections.push(`Avoid: ${promptAssistantNegative.trim()}`);
+    }
+
+    return sections
+      .map((section) => section.trim())
+      .filter((section) => section.length > 0)
+      .join('. ');
+  }, [promptAssistantComposition, promptAssistantLighting, promptAssistantNegative, promptAssistantStyle]);
+
+  const isPromptAssistantActive = useMemo(() => {
+    return [
+      promptAssistantStyle,
+      promptAssistantLighting,
+      promptAssistantComposition,
+      promptAssistantNegative,
+    ].some((value) => value.trim().length > 0);
+  }, [promptAssistantComposition, promptAssistantLighting, promptAssistantNegative, promptAssistantStyle]);
+
+  const effectivePrompt = useMemo(() => buildAssistantPrompt(prompt), [buildAssistantPrompt, prompt]);
+
+  const syncPromptTextareaHeight = useCallback(() => {
+    const textarea = promptTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = '0px';
+    const nextHeight = Math.max(52, Math.min(220, textarea.scrollHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 220 ? 'auto' : 'hidden';
+  }, []);
+
+  useEffect(() => {
+    syncPromptTextareaHeight();
+  }, [prompt, promptHelperOpen, syncPromptTextareaHeight]);
+
   const handleGenerate = useCallback(async () => {
-    if (!prompt.trim() || isGenerating) return;
+    if (!effectivePrompt.trim() || isGenerating) return;
 
     const model = MODEL_MAP[selectedModel] || 'recraftv4';
     const caps = getModelCapabilities(selectedModel);
@@ -3060,8 +3303,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       ? buildPaletteControls(selectedPalette)
       : undefined;
 
-    // Append palette guidance to prompt if a palette is selected
-    let finalPrompt = prompt.trim();
+    // Start from the assistant-assembled prompt so users can generate without
+    // manually engineering one long free-text prompt.
+    let finalPrompt = effectivePrompt.trim();
     if (selectedPalette && selectedPalette.length > 0) {
       finalPrompt += `. ${buildPaletteGuidance(selectedPalette)}`;
     }
@@ -3173,7 +3417,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         height: h,
         x: frameCtx ? startX : startX + i * (w + GAP),
         y: frameCtx ? startY : startY,
-        prompt: prompt.trim(),
+        prompt: effectivePrompt.trim(),
         model: selectedModel,
         style: selectedStyle || 'No style',
         ratio: selectedRatio,
@@ -3201,7 +3445,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     } finally {
       setIsGenerating(false);
     }
-  }, [prompt, isGenerating, selectedModel, selectedRatio, selectedCount, selectedStyle, selectedStyleMeta, projectId, selectedPalette, attachments, contextImage, getViewportWorldCenter, ensureWorldBoundsVisible]);
+  }, [effectivePrompt, isGenerating, selectedModel, selectedRatio, selectedCount, selectedStyle, selectedStyleMeta, projectId, selectedPalette, attachments, contextImage, getViewportWorldCenter, ensureWorldBoundsVisible]);
 
   // Keyboard shortcut: Ctrl/Cmd + Enter to generate
   useEffect(() => {
@@ -3258,14 +3502,28 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area' || editAreaTool === 'wand');
   const isCanvasCustomCursorMode = ((activeTool === 'select' || activeTool === 'hand' || activeTool === 'text' || activeTool === 'brush' || activeTool === 'shapes') || isEditAreaCursorMode) && !spaceHeld;
   const shouldFadeToolCursor = isHandleCursorHover || isHandleCursorDragging;
-  const handleUiZoom = Math.max(zoom, HANDLE_CURSOR_MIN_ZOOM);
-  const resizeHandleHitSize = RESIZE_HANDLE_HIT_SIZE / handleUiZoom;
-  const resizeHandleVisibleSize = RESIZE_HANDLE_VISIBLE_SIZE / handleUiZoom;
-  const resizeHandleVisibleBorderWidth = Math.max(1, RESIZE_HANDLE_VISIBLE_BORDER_WIDTH / handleUiZoom);
-  const outpaintHandleHitLong = OUTPAINT_HANDLE_HIT_LONG / handleUiZoom;
-  const outpaintHandleHitThick = OUTPAINT_HANDLE_HIT_THICK / handleUiZoom;
-  const outpaintHandleVisibleLong = OUTPAINT_HANDLE_VISIBLE_LONG / handleUiZoom;
-  const outpaintHandleVisibleThick = OUTPAINT_HANDLE_VISIBLE_THICK / handleUiZoom;
+  const {
+    handleUiZoom,
+    resizeHandleHitSize,
+    resizeHandleVisibleSize,
+    resizeHandleVisibleBorderWidth,
+    outpaintHandleHitLong,
+    outpaintHandleHitThick,
+    outpaintHandleVisibleLong,
+    outpaintHandleVisibleThick,
+  } = useMemo(() => {
+    const huz = Math.max(zoom, HANDLE_CURSOR_MIN_ZOOM);
+    return {
+      handleUiZoom: huz,
+      resizeHandleHitSize: RESIZE_HANDLE_HIT_SIZE / huz,
+      resizeHandleVisibleSize: RESIZE_HANDLE_VISIBLE_SIZE / huz,
+      resizeHandleVisibleBorderWidth: Math.max(1, RESIZE_HANDLE_VISIBLE_BORDER_WIDTH / huz),
+      outpaintHandleHitLong: OUTPAINT_HANDLE_HIT_LONG / huz,
+      outpaintHandleHitThick: OUTPAINT_HANDLE_HIT_THICK / huz,
+      outpaintHandleVisibleLong: OUTPAINT_HANDLE_VISIBLE_LONG / huz,
+      outpaintHandleVisibleThick: OUTPAINT_HANDLE_VISIBLE_THICK / huz,
+    };
+  }, [zoom]);
   const isDrawToolCursorMode = (activeTool === 'brush' || activeTool === 'shapes') && !spaceHeld && !isPanning;
 
   useEffect(() => {
@@ -3275,6 +3533,26 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       delete document.body.dataset.cursorOverride;
     };
   }, [isCanvasCustomCursorMode, toolCursor.visible]);
+
+  const canvasBgStyle = useMemo(() => ({
+    opacity: canvasBg === 'dots' ? 0.2 : canvasBg === 'grid' ? 0.12 : canvasBg === 'lines' ? 0.1 : 0.14,
+    backgroundImage:
+      canvasBg === 'dots'
+        ? 'radial-gradient(circle at center, #ffffff 1px, transparent 1px)'
+        : canvasBg === 'grid'
+        ? 'linear-gradient(to right, rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.5) 1px, transparent 1px)'
+        : canvasBg === 'lines'
+        ? 'linear-gradient(to bottom, rgba(255,255,255,0.6) 1px, transparent 1px)'
+        : 'radial-gradient(circle at center, rgba(255,255,255,0.8) 1px, transparent 1px), radial-gradient(circle at center, rgba(255,255,255,0.8) 1px, transparent 1px)',
+    backgroundSize:
+      canvasBg === 'cross'
+        ? `${24 * zoom}px ${24 * zoom}px, ${24 * zoom}px ${24 * zoom}px`
+        : `${24 * zoom}px ${24 * zoom}px`,
+    backgroundPosition:
+      canvasBg === 'cross'
+        ? `calc(${panX}px + ${12 * zoom}px) ${panY}px, ${panX}px calc(${panY}px + ${12 * zoom}px)`
+        : `${panX}px ${panY}px`,
+  }), [canvasBg, zoom, panX, panY]);
 
   return (
     <div 
@@ -3302,25 +3580,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         {canvasBg !== 'none' && (
           <div
             className="absolute inset-0 pointer-events-none"
-            style={{
-              opacity: canvasBg === 'dots' ? 0.2 : canvasBg === 'grid' ? 0.12 : canvasBg === 'lines' ? 0.1 : 0.14,
-              backgroundImage:
-                canvasBg === 'dots'
-                  ? 'radial-gradient(circle at center, #ffffff 1px, transparent 1px)'
-                  : canvasBg === 'grid'
-                  ? 'linear-gradient(to right, rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.5) 1px, transparent 1px)'
-                  : canvasBg === 'lines'
-                  ? 'linear-gradient(to bottom, rgba(255,255,255,0.6) 1px, transparent 1px)'
-                  : 'radial-gradient(circle at center, rgba(255,255,255,0.8) 1px, transparent 1px), radial-gradient(circle at center, rgba(255,255,255,0.8) 1px, transparent 1px)',
-              backgroundSize:
-                canvasBg === 'cross'
-                  ? `${24 * zoom}px ${24 * zoom}px, ${24 * zoom}px ${24 * zoom}px`
-                  : `${24 * zoom}px ${24 * zoom}px`,
-              backgroundPosition:
-                canvasBg === 'cross'
-                  ? `calc(${panX}px + ${12 * zoom}px) ${panY}px, ${panX}px calc(${panY}px + ${12 * zoom}px)`
-                  : `${panX}px ${panY}px`,
-            }}
+            style={canvasBgStyle}
           />
         )}
 
@@ -3416,7 +3676,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       <div
                         key={hid}
                         className="absolute z-10 pointer-events-auto"
-                        style={{ ...sx, transform: tf, cursor: cur, width: resizeHandleHitSize, height: resizeHandleHitSize }}
+                        data-cursor-override
+                        style={{ ...sx, transform: tf, cursor: cur, '--cursor-override': cur, width: resizeHandleHitSize, height: resizeHandleHitSize } as React.CSSProperties}
                         onPointerEnter={beginHandleCursorHover}
                         onPointerLeave={endHandleCursorHover}
                         onMouseDown={(e) => {
@@ -3547,6 +3808,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             return (
               <div
                 key={stroke.id}
+                ref={(el) => { if (el) strokeElemRefs.current.set(stroke.id, el); else strokeElemRefs.current.delete(stroke.id); }}
                 className="absolute pointer-events-auto"
                 style={{
                   left: rawMinX + stroke.offsetX - pad,
@@ -3563,7 +3825,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   setSelectedStrokeId(stroke.id);
                   setSelectedImageId(null);
                   if (activeTool === 'select') {
-                    setDragStrokeRef({ id: stroke.id, startX: e.clientX, startY: e.clientY, origOffsetX: stroke.offsetX, origOffsetY: stroke.offsetY });
+                    dragStrokeRef.current = { id: stroke.id, startX: e.clientX, startY: e.clientY, origOffsetX: stroke.offsetX, origOffsetY: stroke.offsetY, liveOffsetX: stroke.offsetX, liveOffsetY: stroke.offsetY };
                   }
                 }}
               >
@@ -3687,7 +3949,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       <div
                         key={hid}
                         className="absolute z-10 pointer-events-auto"
-                        style={{ ...sx, transform: tf, cursor: cur, width: resizeHandleHitSize, height: resizeHandleHitSize }}
+                        data-cursor-override
+                        style={{ ...sx, transform: tf, cursor: cur, '--cursor-override': cur, width: resizeHandleHitSize, height: resizeHandleHitSize } as React.CSSProperties}
                         onPointerEnter={beginHandleCursorHover}
                         onPointerLeave={endHandleCursorHover}
                         onMouseDown={(e) => {
@@ -3926,12 +4189,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     <div
                       key={handle}
                       className="absolute z-30"
+                      data-cursor-override
                       style={{
                         ...style,
+                        '--cursor-override': style.cursor,
                         pointerEvents: 'auto',
                         width: isHoriz ? outpaintHandleHitLong : outpaintHandleHitThick,
                         height: isHoriz ? outpaintHandleHitThick : outpaintHandleHitLong,
-                      }}
+                      } as React.CSSProperties}
                       onPointerEnter={beginHandleCursorHover}
                       onPointerLeave={endHandleCursorHover}
                       onMouseDown={(e) => handleOutpaintMouseDown(e, handle, img)}
@@ -3964,14 +4229,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onMouseEnter={() => setToolCursor((prev) => (prev.visible ? { ...prev, visible: false } : prev))}
             onMouseLeave={() => setToolCursor((prev) => (isCanvasCustomCursorMode && !prev.visible ? { ...prev, visible: true } : prev))}
           >
-            <div className="bg-[#111113]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl">
-              <button
-                disabled={!hasMask || isProcessing}
-                onClick={handleEraseWithAI}
-                className="bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black text-[13px] font-semibold py-2.5 px-5 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
-              >
-                {isProcessing ? 'Erasing...' : 'Erase with AI'}
-              </button>
+            <div className="bg-[#111113]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl min-w-[420px] max-w-[560px]">
+              <div className="flex items-center gap-2">
+                <input
+                  value={editAreaPrompt}
+                  onChange={(e) => setEditAreaPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleModifyAreaWithAI();
+                    }
+                  }}
+                  placeholder="Describe how to modify selected area"
+                  className="flex-1 min-w-0 bg-surface border border-white/10 rounded-xl px-3 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <button
+                  disabled={!hasMask || !editAreaPrompt.trim() || isProcessing}
+                  onClick={handleModifyAreaWithAI}
+                  className="bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black text-[13px] font-semibold py-2.5 px-4 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all whitespace-nowrap"
+                >
+                  {isProcessing && processingAction === 'modify-area' ? 'Modifying...' : 'Modify with AI'}
+                </button>
+                <button
+                  disabled={!hasMask || isProcessing}
+                  onClick={handleEraseWithAI}
+                  className="bg-surface border border-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-foreground text-[13px] font-semibold py-2.5 px-4 rounded-xl hover:bg-white/8 active:scale-[0.98] transition-all whitespace-nowrap"
+                >
+                  {isProcessing && processingAction === 'erase-area' ? 'Erasing...' : 'Erase with AI'}
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2 px-1">
+                Only the masked region is changed. The rest of the image is preserved.
+              </p>
             </div>
           </div>
         )}
@@ -5522,11 +5811,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     <button
                       onClick={() => {
                         const historyImageId = selectedStroke.historyImageId ?? null;
-                        setBrushStrokes((prev) => {
-                          const next = prev.filter((s) => s.id !== selectedStroke.id);
-                          pushHistory('Deleted brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, null);
-                          return next;
-                        });
+                        const next = brushStrokes.filter((s) => s.id !== selectedStroke.id);
+                        setBrushStrokes(next);
+                        pushHistory('Deleted brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, null);
                         setSelectedStrokeId(null);
                       }}
                       className="text-muted-foreground hover:text-red-400 transition-colors"
@@ -5615,15 +5902,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           key={c}
                           onClick={() => {
                             const historyImageId = selectedStroke.historyImageId ?? null;
-                            setBrushStrokes((prev) => {
-                              const next = prev.map((s) => {
-                                if (s.id !== selectedStroke.id) return s;
-                                const shouldSyncFill = !!s.fill && (!s.fillColor || s.fillColor === s.color);
-                                return { ...s, color: c, fillColor: shouldSyncFill ? c : s.fillColor };
-                              });
-                              pushHistory('Changed stroke color', canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
-                              return next;
+                            const next = brushStrokes.map((s) => {
+                              if (s.id !== selectedStroke.id) return s;
+                              const shouldSyncFill = !!s.fill && (!s.fillColor || s.fillColor === s.color);
+                              return { ...s, color: c, fillColor: shouldSyncFill ? c : s.fillColor };
                             });
+                            setBrushStrokes(next);
+                            pushHistory('Changed stroke color', canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
                           }}
                           className={cn(
                             'w-7 h-7 rounded-lg transition-all border-2',
@@ -5640,16 +5925,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           value={selectedStroke.color}
                           onChange={(e) => {
                             const nextColor = e.target.value;
+                            setBrushStrokes((prev) => prev.map((s) => {
+                              if (s.id !== selectedStroke.id) return s;
+                              const shouldSyncFill = !!s.fill && (!s.fillColor || s.fillColor === s.color);
+                              return { ...s, color: nextColor, fillColor: shouldSyncFill ? nextColor : s.fillColor };
+                            }));
+                          }}
+                          onBlur={() => {
                             const historyImageId = selectedStroke.historyImageId ?? null;
-                            setBrushStrokes((prev) => {
-                              const next = prev.map((s) => {
-                                if (s.id !== selectedStroke.id) return s;
-                                const shouldSyncFill = !!s.fill && (!s.fillColor || s.fillColor === s.color);
-                                return { ...s, color: nextColor, fillColor: shouldSyncFill ? nextColor : s.fillColor };
-                              });
-                              pushHistory('Changed stroke color', canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
-                              return next;
-                            });
+                            pushHistory('Changed stroke color', canvasImages, historyImageId, canvasTexts, historyImageId, brushStrokesRef.current, selectedStroke.id);
                           }}
                           className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
                         />
@@ -5666,15 +5950,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                         onClick={() => {
                           const historyImageId = selectedStroke.historyImageId ?? null;
                           const label = selectedStroke.fill ? 'Disabled shape fill' : 'Enabled shape fill';
-                          setBrushStrokes((prev) => {
-                            const next = prev.map((s) => {
-                              if (s.id !== selectedStroke.id) return s;
-                              const nextFill = !s.fill;
-                              return { ...s, fill: nextFill, fillColor: nextFill ? (s.fillColor || s.color) : s.fillColor };
-                            });
-                            pushHistory(label, canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
-                            return next;
+                          const next = brushStrokes.map((s) => {
+                            if (s.id !== selectedStroke.id) return s;
+                            const nextFill = !s.fill;
+                            return { ...s, fill: nextFill, fillColor: nextFill ? (s.fillColor || s.color) : s.fillColor };
                           });
+                          setBrushStrokes(next);
+                          pushHistory(label, canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
                         }}
                         className={cn(
                           'h-8 rounded-lg text-xs font-semibold border transition-colors',
@@ -5694,12 +5976,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                               value={selectedStroke.fillColor || selectedStroke.color}
                               onChange={(e) => {
                                 const nextFillColor = e.target.value;
+                                setBrushStrokes((prev) => prev.map((s) => s.id === selectedStroke.id ? { ...s, fillColor: nextFillColor } : s));
+                              }}
+                              onBlur={() => {
                                 const historyImageId = selectedStroke.historyImageId ?? null;
-                                setBrushStrokes((prev) => {
-                                  const next = prev.map((s) => s.id === selectedStroke.id ? { ...s, fillColor: nextFillColor } : s);
-                                  pushHistory('Changed shape fill color', canvasImages, historyImageId, canvasTexts, historyImageId, next, selectedStroke.id);
-                                  return next;
-                                });
+                                pushHistory('Changed shape fill color', canvasImages, historyImageId, canvasTexts, historyImageId, brushStrokesRef.current, selectedStroke.id);
                               }}
                               className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
                             />
@@ -5721,10 +6002,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       type="range" min={1} max={40} value={selectedStroke.size}
                       onChange={(e) => setBrushStrokes((prev) => prev.map((s) => s.id === selectedStroke.id ? { ...s, size: Number(e.target.value) } : s))}
                       onPointerUp={() => {
-                        const targetStroke = brushStrokes.find((s) => s.id === selectedStroke.id);
+                        const latestStrokes = brushStrokesRef.current;
+                        const targetStroke = latestStrokes.find((s) => s.id === selectedStroke.id);
                         if (!targetStroke) return;
                         const historyImageId = targetStroke.historyImageId ?? null;
-                        pushHistory('Adjusted stroke width', canvasImages, historyImageId, canvasTexts, historyImageId, brushStrokes, targetStroke.id);
+                        pushHistory('Adjusted stroke width', canvasImages, historyImageId, canvasTexts, historyImageId, latestStrokes, targetStroke.id);
                       }}
                       className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white/50"
                     />
@@ -5740,10 +6022,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       type="range" min={0} max={100} value={selectedStroke.opacity}
                       onChange={(e) => setBrushStrokes((prev) => prev.map((s) => s.id === selectedStroke.id ? { ...s, opacity: Number(e.target.value) } : s))}
                       onPointerUp={() => {
-                        const targetStroke = brushStrokes.find((s) => s.id === selectedStroke.id);
+                        const latestStrokes = brushStrokesRef.current;
+                        const targetStroke = latestStrokes.find((s) => s.id === selectedStroke.id);
                         if (!targetStroke) return;
                         const historyImageId = targetStroke.historyImageId ?? null;
-                        pushHistory('Adjusted stroke opacity', canvasImages, historyImageId, canvasTexts, historyImageId, brushStrokes, targetStroke.id);
+                        pushHistory('Adjusted stroke opacity', canvasImages, historyImageId, canvasTexts, historyImageId, latestStrokes, targetStroke.id);
                       }}
                       className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white/50"
                     />
@@ -5755,11 +6038,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       onClick={() => {
                         const historyImageId = selectedStroke.historyImageId ?? null;
                         const dup: BrushStroke = { ...selectedStroke, id: `stroke-${Date.now()}`, offsetX: selectedStroke.offsetX + 20, offsetY: selectedStroke.offsetY + 20, historyImageId };
-                        setBrushStrokes((prev) => {
-                          const next = [...prev, dup];
-                          pushHistory('Duplicated brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, dup.id);
-                          return next;
-                        });
+                        const next = [...brushStrokes, dup];
+                        setBrushStrokes(next);
+                        pushHistory('Duplicated brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, dup.id);
                         setSelectedStrokeId(dup.id);
                       }}
                       className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-white hover:bg-white/5 transition-colors"
@@ -5769,11 +6050,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     <button
                       onClick={() => {
                         const historyImageId = selectedStroke.historyImageId ?? null;
-                        setBrushStrokes((prev) => {
-                          const next = prev.filter((s) => s.id !== selectedStroke.id);
-                          pushHistory('Deleted brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, null);
-                          return next;
-                        });
+                        const next = brushStrokes.filter((s) => s.id !== selectedStroke.id);
+                        setBrushStrokes(next);
+                        pushHistory('Deleted brush stroke', canvasImages, historyImageId, canvasTexts, historyImageId, next, null);
                         setSelectedStrokeId(null);
                       }}
                       className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-400/10 transition-colors"
@@ -6311,7 +6590,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                               canvas.width = selectedImage.width;
                               canvas.height = selectedImage.height;
                               const ctx = canvas.getContext('2d')!;
-                              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                              // Replicate CSS object-cover so the exported image matches the canvas view.
+                              // Without this, mismatched aspect ratios cause a y-shift between the
+                              // photo and any brush strokes the user drew on top of it.
+                              const dW = canvas.width;
+                              const dH = canvas.height;
+                              const nW = img.naturalWidth || dW;
+                              const nH = img.naturalHeight || dH;
+                              const coverScale = Math.max(dW / nW, dH / nH);
+                              const sX = Math.max(0, (nW - dW / coverScale) / 2);
+                              const sY = Math.max(0, (nH - dH / coverScale) / 2);
+                              const sW = Math.min(nW, dW / coverScale);
+                              const sH = Math.min(nH, dH / coverScale);
+                              ctx.drawImage(img, sX, sY, sW, sH, 0, 0, dW, dH);
                               // Composite brush strokes/shapes that intersect this image.
                               compositeStrokes(ctx, canvas.width, canvas.height);
                               compositeTexts(ctx, canvas.width, canvas.height);
@@ -6353,7 +6644,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                                 ctx.fillStyle = '#ffffff';
                                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                               }
-                              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                              // Replicate CSS object-cover so the exported image matches the canvas view.
+                              // Without this, mismatched aspect ratios cause a y-shift between the
+                              // photo and any brush strokes the user drew on top of it.
+                              const dW = canvas.width;
+                              const dH = canvas.height;
+                              const nW = img.naturalWidth || dW;
+                              const nH = img.naturalHeight || dH;
+                              const coverScale = Math.max(dW / nW, dH / nH);
+                              const sX = Math.max(0, (nW - dW / coverScale) / 2);
+                              const sY = Math.max(0, (nH - dH / coverScale) / 2);
+                              const sW = Math.min(nW, dW / coverScale);
+                              const sH = Math.min(nH, dH / coverScale);
+                              ctx.drawImage(img, sX, sY, sW, sH, 0, 0, dW, dH);
                               // Composite brush strokes/shapes that intersect this image.
                               compositeStrokes(ctx, canvas.width, canvas.height);
                               // Composite text on top of the image
@@ -6960,21 +7263,136 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             )}
           </AnimatePresence>
 
+          {/* Prompt assistant */}
+          <div className="px-2 pt-1">
+            <button
+              onClick={() => setPromptHelperOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:text-white hover:bg-white/6 transition-colors"
+            >
+              <span className="font-medium">Prompt helper</span>
+              <div className="flex items-center gap-2">
+                {isPromptAssistantActive && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-semibold">Active</span>
+                )}
+                <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', promptHelperOpen && 'rotate-180')} />
+              </div>
+            </button>
+
+            <AnimatePresence initial={false}>
+              {promptHelperOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden"
+                >
+                  <div className="px-1 pb-1 pt-1 flex flex-col gap-2.5">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Style</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PROMPT_ASSISTANT_STYLE_CHIPS.map((chip) => (
+                          <button
+                            key={chip}
+                            onClick={() => setPromptAssistantStyle((prev) => appendPromptAssistantValue(prev, chip))}
+                            className="px-2 py-1 rounded-lg text-[11px] border border-white/10 bg-surface text-muted-foreground hover:text-white hover:bg-white/8 transition-colors"
+                          >
+                            {chip}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Lighting</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PROMPT_ASSISTANT_LIGHTING_CHIPS.map((chip) => (
+                          <button
+                            key={chip}
+                            onClick={() => setPromptAssistantLighting((prev) => appendPromptAssistantValue(prev, chip))}
+                            className="px-2 py-1 rounded-lg text-[11px] border border-white/10 bg-surface text-muted-foreground hover:text-white hover:bg-white/8 transition-colors"
+                          >
+                            {chip}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Composition</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PROMPT_ASSISTANT_COMPOSITION_CHIPS.map((chip) => (
+                          <button
+                            key={chip}
+                            onClick={() => setPromptAssistantComposition((prev) => appendPromptAssistantValue(prev, chip))}
+                            className="px-2 py-1 rounded-lg text-[11px] border border-white/10 bg-surface text-muted-foreground hover:text-white hover:bg-white/8 transition-colors"
+                          >
+                            {chip}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        value={promptAssistantStyle}
+                        onChange={(e) => setPromptAssistantStyle(e.target.value)}
+                        placeholder="Style direction"
+                        className="w-full bg-surface border border-white/8 rounded-lg px-2.5 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      />
+                      <input
+                        value={promptAssistantLighting}
+                        onChange={(e) => setPromptAssistantLighting(e.target.value)}
+                        placeholder="Lighting"
+                        className="w-full bg-surface border border-white/8 rounded-lg px-2.5 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      />
+                      <input
+                        value={promptAssistantComposition}
+                        onChange={(e) => setPromptAssistantComposition(e.target.value)}
+                        placeholder="Composition"
+                        className="w-full bg-surface border border-white/8 rounded-lg px-2.5 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      />
+                      <input
+                        value={promptAssistantNegative}
+                        onChange={(e) => setPromptAssistantNegative(e.target.value)}
+                        placeholder="Avoid (optional)"
+                        className="w-full bg-surface border border-white/8 rounded-lg px-2.5 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {/* Main Input */}
           <div className="relative px-3 pt-1">
             <textarea
+              ref={promptTextareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onInput={syncPromptTextareaHeight}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   handleGenerate();
                 }
               }}
-              placeholder="Describe what you want to generate"
-              className="w-full bg-transparent border-none outline-none resize-none text-white placeholder:text-muted-foreground text-[15px] h-[52px] font-medium leading-relaxed"
+              placeholder="Describe what you want to generate (Shift+Enter for a new line)"
+              className="w-full bg-transparent border-none outline-none resize-none text-white placeholder:text-muted-foreground text-[15px] min-h-[52px] max-h-[220px] font-medium leading-relaxed"
               autoFocus
             />
+            <div className="flex items-center justify-end pb-1">
+              <span className="text-[10px] text-muted-foreground">{effectivePrompt.length} chars</span>
+            </div>
+
+            {isPromptAssistantActive && (
+              <div className="mb-2 rounded-lg border border-white/8 bg-surface/60 px-2.5 py-2">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Final prompt preview</p>
+                <p className="text-[11px] text-foreground/85 leading-relaxed whitespace-pre-wrap">{effectivePrompt || 'Start typing in the prompt box above.'}</p>
+              </div>
+            )}
+
             {/* Attachment thumbnails */}
             {attachments.length > 0 && (
               <div className="flex items-center gap-2 pb-2">
@@ -7018,12 +7436,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   />
                   <div className="py-2 px-3 text-xs font-bold text-white mt-1">OpenAI models</div>
                   <ModelItem 
-                    title="GPT Image 1" time="15 seconds" cost={50} isNew icon="G1"
-                    selected={selectedModel === 'GPT Image 1'} onClick={() => { setSelectedModel('GPT Image 1'); setActiveDropdown(null); }}
-                  />
-                  <ModelItem 
-                    title="DALL·E 3" time="10 seconds" cost={40} icon="D3"
-                    selected={selectedModel === 'DALL·E 3'} onClick={() => { setSelectedModel('DALL·E 3'); setActiveDropdown(null); }}
+                    title="GPT Image 1.5" time="15 seconds" cost={50} isNew icon="G1"
+                    selected={selectedModel === 'GPT Image 1.5'} onClick={() => { setSelectedModel('GPT Image 1.5'); setActiveDropdown(null); }}
                   />
                   <div className="py-2 px-3 text-xs font-bold text-white mt-1">Gemini models</div>
                   <ModelItem
@@ -7298,12 +7712,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {/* Submit Button */}
             <button 
               onClick={handleGenerate}
-              disabled={isGenerating || !prompt.trim()}
+              disabled={isGenerating || !effectivePrompt.trim()}
               className={cn(
                 "w-10 h-10 rounded-full flex flex-shrink-0 items-center justify-center transition-all shadow-lg ml-2",
                 isGenerating
                   ? "bg-primary/50 text-white/50 cursor-not-allowed"
-                  : prompt.trim().length > 0 
+                  : effectivePrompt.trim().length > 0 
                     ? "bg-white text-black hover:bg-white/90 hover:scale-105 shadow-[0_2px_12px_rgba(255,255,255,0.15)]" 
                     : "bg-surface text-muted-foreground hover:bg-white/10"
               )}
@@ -9206,14 +9620,14 @@ const STYLE_CONTEXT_OPTIONS = [
 const STYLE_TEST_MODEL_OPTIONS = [
   { label: 'Recraft V4', value: 'recraftv4' },
   { label: 'Recraft V3', value: 'recraftv3' },
-  { label: 'GPT Image 1', value: 'gpt-image-1' },
+  { label: 'GPT Image 1.5', value: 'gpt-image-1.5' },
   { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
 ] as const;
 
 const STYLE_TEST_MODELS_WITH_ATTACHMENTS = new Set<string>([
   'recraftv4',
   'recraftv3',
-  'gpt-image-1',
+  'gpt-image-1.5',
 ]);
 
 type StyleContextMode = (typeof STYLE_CONTEXT_OPTIONS)[number]['value'];

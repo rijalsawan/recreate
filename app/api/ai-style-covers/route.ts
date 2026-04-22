@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession } from '@/lib/api-helpers';
+import { getAuthSession, requireAdminAccess } from '@/lib/api-helpers';
 import { prisma } from '@/lib/prisma';
 import sharp from 'sharp';
 
@@ -61,8 +61,11 @@ export async function GET() {
 // POST /api/ai-style-covers
 // Body: { styleKey: string, imageUrl: string }
 export async function POST(request: NextRequest) {
-  const [, error] = await getAuthSession();
+  const [session, error] = await getAuthSession();
   if (error) return error;
+
+  const adminError = requireAdminAccess(session.user.email);
+  if (adminError) return adminError;
 
   const body = await request.json().catch(() => ({}));
   const styleKey = typeof body.styleKey === 'string' ? body.styleKey.trim() : '';
@@ -92,8 +95,11 @@ export async function POST(request: NextRequest) {
 // DELETE /api/ai-style-covers
 // Clears all AI-generated style cover records.
 export async function DELETE() {
-  const [, error] = await getAuthSession();
+  const [session, error] = await getAuthSession();
   if (error) return error;
+
+  const adminError = requireAdminAccess(session.user.email);
+  if (adminError) return adminError;
 
   await prisma.styleCover.deleteMany({
     where: { styleKey: { startsWith: AI_STYLE_KEY_PREFIX } },

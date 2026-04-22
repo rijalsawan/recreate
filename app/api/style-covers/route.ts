@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession } from '@/lib/api-helpers';
+import { getAuthSession, requireAdminAccess } from '@/lib/api-helpers';
 import { prisma } from '@/lib/prisma';
 import sharp from 'sharp';
 
@@ -56,8 +56,11 @@ export async function GET() {
 // Compresses the image to ~400×400 JPEG before storing, then upserts.
 // Auth required to prevent anonymous writes.
 export async function POST(request: NextRequest) {
-  const [, error] = await getAuthSession();
+  const [session, error] = await getAuthSession();
   if (error) return error;
+
+  const adminError = requireAdminAccess(session.user.email);
+  if (adminError) return adminError;
 
   const { styleKey, imageUrl } = await request.json();
   if (!styleKey || typeof styleKey !== 'string') {
@@ -85,8 +88,11 @@ export async function POST(request: NextRequest) {
 // Clears ALL cover records — use to wipe the table before regenerating.
 // Auth required.
 export async function DELETE() {
-  const [, error] = await getAuthSession();
+  const [session, error] = await getAuthSession();
   if (error) return error;
+
+  const adminError = requireAdminAccess(session.user.email);
+  if (adminError) return adminError;
 
   await prisma.styleCover.deleteMany({});
   cachedKeys = null;

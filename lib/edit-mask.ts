@@ -2,6 +2,11 @@ import sharp from 'sharp';
 
 type MaskTarget = 'recraft' | 'openai';
 
+type NormalizeMaskOptions = {
+  dilate?: boolean;
+  dilatePixels?: number;
+};
+
 function isEditPixel(r: number, g: number, b: number, a: number): boolean {
   // Support both mask conventions:
   // - Recraft-style: white = edit, black = keep
@@ -77,6 +82,7 @@ export async function normalizeMaskForTarget(
   imageFile: File | Blob,
   maskFile: File | Blob,
   target: MaskTarget,
+  options: NormalizeMaskOptions = {},
 ): Promise<File> {
   const { width, height } = await getImageDimensions(imageFile);
   const source = await getResizedMaskRgba(maskFile, width, height);
@@ -92,12 +98,15 @@ export async function normalizeMaskForTarget(
     // ~2% of the image short side (min 4px, max 24px).  This removes the need
     // for multiple erase passes by covering the edge halo that falls just
     // outside the user's lasso/brush stroke.
-    const radius = Math.max(4, Math.min(24, Math.round(Math.min(width, height) * 0.02)));
-    const dilated = dilateBinaryMask(binary, width, height, radius);
+    const shouldDilate = options.dilate ?? true;
+    const dilateRadius = options.dilatePixels ?? Math.max(4, Math.min(24, Math.round(Math.min(width, height) * 0.02)));
+    const outputBinary = shouldDilate
+      ? dilateBinaryMask(binary, width, height, Math.max(1, dilateRadius))
+      : binary;
 
     // Step 3: encode as a strict 1-channel grayscale PNG.
     // Feed 1-channel raw directly; toColourspace('b-w') ensures PNG colortype 0.
-    const png = await sharp(dilated, {
+    const png = await sharp(outputBinary, {
       raw: { width, height, channels: 1 },
     })
       .toColourspace('b-w')

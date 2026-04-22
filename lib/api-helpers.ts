@@ -9,6 +9,12 @@ const ADMIN_EMAIL_ALLOWLIST = new Set(
     .filter(Boolean)
 );
 
+export function isAdminEmail(email: string | null | undefined): boolean {
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  return ADMIN_EMAIL_ALLOWLIST.has(normalizedEmail);
+}
+
 /**
  * Get authenticated session or return 401 response.
  * Returns [session, null] on success, or [null, NextResponse] on failure.
@@ -26,13 +32,7 @@ export async function getAuthSession() {
  * Admin users are configured by ADMIN_EMAILS or FONT_ADMIN_EMAILS env vars.
  */
 export function requireAdminAccess(email: string | null | undefined) {
-  const normalizedEmail = email?.trim().toLowerCase();
-
-  if (!normalizedEmail) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  if (!ADMIN_EMAIL_ALLOWLIST.has(normalizedEmail)) {
+  if (!isAdminEmail(email)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
