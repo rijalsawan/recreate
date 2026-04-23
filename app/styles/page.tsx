@@ -2388,6 +2388,7 @@ const STYLE_CONTEXT_OPTIONS = [
 const STYLE_TEST_MODEL_OPTIONS = [
   { label: 'Recraft V4', value: 'recraftv4' },
   { label: 'Recraft V3', value: 'recraftv3' },
+  { label: 'GPT Image 2', value: 'gpt-image-2' },
   { label: 'GPT Image 1', value: 'gpt-image-1' },
   { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
 ] as const;
@@ -2395,6 +2396,7 @@ const STYLE_TEST_MODEL_OPTIONS = [
 const STYLE_TEST_MODELS_WITH_ATTACHMENTS = new Set<string>([
   'recraftv4',
   'recraftv3',
+  'gpt-image-2',
   'gpt-image-1',
 ]);
 

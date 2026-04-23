@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PUBLIC_PLAN_CARDS, type BillingInterval, type PlanSlug } from '@/lib/plans';
 import { useUserStore } from '@/stores/useUserStore';
+import { lockBodyScroll, unlockBodyScroll } from '@/lib/body-scroll-lock';
 
 type Props = {
   isOpen: boolean;
@@ -16,6 +17,16 @@ type Props = {
 export function PricingModal({ isOpen, onClose }: Props) {
   const { user } = useUserStore();
   const currentPlan = (user?.plan ?? 'free') as PlanSlug;
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    lockBodyScroll();
+
+    return () => {
+      unlockBodyScroll();
+    };
+  }, [isOpen]);
 
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('month');
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
@@ -37,7 +48,7 @@ export function PricingModal({ isOpen, onClose }: Props) {
       const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to start checkout');
       if (!data.url) throw new Error('No checkout URL returned');
-      window.location.href = data.url;
+      window.location.assign(data.url);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to start checkout');
     } finally {
@@ -54,7 +65,7 @@ export function PricingModal({ isOpen, onClose }: Props) {
       const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to open portal');
       if (!data.url) throw new Error('No portal URL returned');
-      window.location.href = data.url;
+      window.location.assign(data.url);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Could not open Stripe portal');
     } finally {
@@ -71,7 +82,7 @@ export function PricingModal({ isOpen, onClose }: Props) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-80 bg-black/60 backdrop-blur-sm"
             onClick={onClose}
           />
 
@@ -81,7 +92,7 @@ export function PricingModal({ isOpen, onClose }: Props) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 16 }}
             transition={{ duration: 0.2, ease: [0.21, 0.47, 0.32, 0.98] }}
-            className="fixed inset-0 z-[81] flex items-center justify-center p-4 pointer-events-none"
+            className="fixed inset-0 z-81 flex items-center justify-center p-4 pointer-events-none"
           >
             <div
               className="pointer-events-auto w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#0A0A0B] border border-white/10 rounded-3xl shadow-[0_0_80px_-20px_rgba(124,58,237,0.3)]"

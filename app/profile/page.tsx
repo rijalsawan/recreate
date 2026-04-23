@@ -32,6 +32,7 @@ type ProfileResponse = {
   image: string | null;
   credits: number;
   plan: UserPlan;
+  role: 'USER' | 'ADMIN';
   subscriptionStatus: string | null;
   subscriptionCurrentPeriodEnd: string | null;
   subscriptionCancelAtPeriodEnd: boolean;
@@ -204,6 +205,7 @@ export default function ProfilePage() {
         avatarUrl: updated.image || undefined,
         credits: updated.credits,
         plan: updated.plan,
+        role: updated.role ?? 'USER',
       });
 
       toast.success('Profile updated');

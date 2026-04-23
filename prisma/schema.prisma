@@ -19,6 +19,11 @@ enum Plan {
   BUSINESS
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String?
@@ -27,6 +32,7 @@ model User {
   image         String?
   credits       Int       @default(100)
   plan          Plan      @default(FREE)
+  role          Role      @default(USER)
   stripeCustomerId String? @unique
   stripeSubscriptionId String? @unique
   stripePriceId String?
@@ -261,4 +267,13 @@ model BillingWebhookEvent {
 
   @@unique([provider, eventId], name: "provider_eventId")
   @@index([eventType])
+}
+
+// Landing page configuration store — admin-only key/value pairs.
+// key: e.g. "prompt-reveal-points"
+// value: arbitrary JSON (typed per-key at the application layer)
+model LandingConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

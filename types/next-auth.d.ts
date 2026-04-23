@@ -1,6 +1,7 @@
 import { DefaultSession, DefaultJWT } from 'next-auth';
 
 type SessionPlan = 'free' | 'pro' | 'business';
+type SessionRole = 'USER' | 'ADMIN';
 
 declare module 'next-auth' {
   interface Session {
@@ -8,6 +9,7 @@ declare module 'next-auth' {
       id: string;
       credits: number;
       plan: SessionPlan;
+      role: SessionRole;
     } & DefaultSession['user'];
   }
 }
@@ -17,5 +19,6 @@ declare module 'next-auth/jwt' {
     id?: string;
     credits?: number;
     plan?: SessionPlan;
+    role?: SessionRole;
   }
 }

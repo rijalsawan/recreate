@@ -11,6 +11,7 @@ const USER_PROFILE_SELECT = {
   image: true,
   credits: true,
   plan: true,
+  role: true,
   subscriptionStatus: true,
   subscriptionCurrentPeriodEnd: true,
   subscriptionCancelAtPeriodEnd: true,
@@ -24,6 +25,7 @@ function serializeProfile(user: {
   image: string | null;
   credits: number;
   plan: string;
+  role: string;
   subscriptionStatus: string | null;
   subscriptionCurrentPeriodEnd: Date | null;
   subscriptionCancelAtPeriodEnd: boolean;
@@ -36,6 +38,7 @@ function serializeProfile(user: {
     image: user.image,
     credits: user.credits,
     plan: planToSlug(user.plan),
+    role: user.role as 'USER' | 'ADMIN',
     subscriptionStatus: user.subscriptionStatus,
     subscriptionCurrentPeriodEnd: user.subscriptionCurrentPeriodEnd?.toISOString() || null,
     subscriptionCancelAtPeriodEnd: user.subscriptionCancelAtPeriodEnd,

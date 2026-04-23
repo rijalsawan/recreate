@@ -28,12 +28,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const dbUser = await prisma.user.findUnique({
           where: { id: userId },
-          select: { credits: true, plan: true },
+          select: { credits: true, plan: true, role: true },
         });
 
         if (dbUser) {
           token.credits = dbUser.credits;
           token.plan = planToSlug(dbUser.plan);
+          token.role = dbUser.role as 'USER' | 'ADMIN';
         }
       }
 
@@ -44,6 +45,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.id = token.id as string;
         session.user.credits = token.credits as number;
         session.user.plan = (token.plan as 'free' | 'pro' | 'business' | undefined) ?? 'free';
+        session.user.role = (token.role as 'USER' | 'ADMIN' | undefined) ?? 'USER';
       }
       return session;
     },

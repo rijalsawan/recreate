@@ -131,3 +131,26 @@ body.global-custom-cursor [data-cursor-override] * {
   border-color: var(--color-border-hover);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05); /* ring-1 ring-white/5 */
 }
+
+/* ─── Landing page marquee keyframes ─── */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes marquee-hero {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes testimonials-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.animate-testimonials-scroll {
+  animation: testimonials-scroll 50s linear infinite;
+}
+.animate-testimonials-scroll:hover {
+  animation-play-state: paused;
+}

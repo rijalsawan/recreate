@@ -18,6 +18,7 @@ export function useSessionSync() {
         avatarUrl: session.user.image ?? undefined,
         credits: session.user.credits ?? 0,
         plan: planToSlug(session.user.plan),
+        role: session.user.role ?? 'USER',
       });
     } else if (status === 'unauthenticated') {
       setUser(null);

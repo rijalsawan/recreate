@@ -5,6 +5,7 @@ export interface UserProfile {
   avatarUrl?: string;
   credits: number;
   plan: 'free' | 'pro' | 'business';
+  role: 'USER' | 'ADMIN';
 }
 
 export interface UserState {

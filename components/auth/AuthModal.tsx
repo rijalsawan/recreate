@@ -6,9 +6,20 @@ import { Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuthModal } from '@/stores/useAuthModal';
 import { signIn } from 'next-auth/react';
+import { lockBodyScroll, unlockBodyScroll } from '@/lib/body-scroll-lock';
 
 export const AuthModal = () => {
   const { isOpen, view, openModal, closeModal } = useAuthModal();
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    lockBodyScroll();
+
+    return () => {
+      unlockBodyScroll();
+    };
+  }, [isOpen]);
 
   // Close on Escape key
   useEffect(() => {
@@ -46,7 +57,7 @@ export const AuthModal = () => {
             className="relative w-full max-w-md bg-elevated border border-border shadow-2xl rounded-3xl overflow-hidden"
           >
             {/* Top decorative gradient */}
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-secondary to-primary" />
+            <div className="absolute top-0 left-0 right-0 h-1 bg-linear-to-r from-primary via-secondary to-primary" />
             
             <button
               onClick={closeModal}

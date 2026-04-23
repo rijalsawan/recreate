@@ -71,6 +71,8 @@ function parseSelectedStyleMeta(value: unknown): SelectedStyleMeta | null {
 
 function mapApiModelToEditorModel(apiModel?: string): string | null {
   switch (apiModel) {
+    case 'gpt-image-2':
+      return 'GPT Image 2';
     case 'recraftv4_pro':
       return 'Recraft V4 Pro';
     case 'recraftv4_pro_vector':
@@ -87,6 +89,8 @@ function mapApiModelToEditorModel(apiModel?: string): string | null {
       return 'Recraft V2';
     case 'recraftv2_vector':
       return 'Recraft V2 Vector';
+    case 'gpt-image-1':
+      return 'GPT Image 1';
     case 'gpt-image-1.5':
       return 'GPT Image 1.5';
     case 'gemini-2.5-flash':
@@ -799,7 +803,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Model capabilities for the currently selected model
   const currentModelId = getModelId(selectedModel);
-  const isCurrentModelOpenAI = currentModelId === 'gpt-image-1.5';
+  const isCurrentModelOpenAI = currentModelId === 'dall-e-3'
+    || currentModelId === 'gpt-image-1'
+    || currentModelId === 'gpt-image-1.5'
+    || currentModelId === 'gpt-image-2';
   const currentModelCaps = getModelCapabilities(selectedModel);
 
   const applyIncomingStyleSelection = useCallback((incoming: SelectedStyleMeta | null) => {
@@ -3131,6 +3138,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     'Recraft V3 Vector': 'recraftv3_vector',
     'Recraft V2': 'recraftv2',
     'Recraft V2 Vector': 'recraftv2_vector',
+    'GPT Image 2': 'gpt-image-2',
     'GPT Image 1.5': 'gpt-image-1.5',
     'Gemini 2.5 Flash': 'gemini-2.5-flash',
     'Auto mode': 'recraftv4',
@@ -7435,6 +7443,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     selected={selectedModel === 'Auto mode'} onClick={() => { setSelectedModel('Auto mode'); setActiveDropdown(null); }}
                   />
                   <div className="py-2 px-3 text-xs font-bold text-white mt-1">OpenAI models</div>
+                  <ModelItem
+                    title="GPT Image 2" time="15 seconds" cost={50} isNew icon="G2"
+                    selected={selectedModel === 'GPT Image 2'} onClick={() => { setSelectedModel('GPT Image 2'); setActiveDropdown(null); }}
+                  />
                   <ModelItem 
                     title="GPT Image 1.5" time="15 seconds" cost={50} isNew icon="G1"
                     selected={selectedModel === 'GPT Image 1.5'} onClick={() => { setSelectedModel('GPT Image 1.5'); setActiveDropdown(null); }}
@@ -7686,7 +7698,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   )}
                   onClick={() => {
                     if (currentModelCaps && !currentModelCaps.attachments) {
-                      toast.error(`${selectedModel} doesn't support image attachments. Switch to GPT Image 1 or a Recraft model to attach reference images.`);
+                      toast.error(`${selectedModel} doesn't support image attachments. Switch to GPT Image 2 or a Recraft model to attach reference images.`);
                       return;
                     }
                     const input = document.createElement('input');
@@ -8010,7 +8022,9 @@ function abbreviateModel(model: string): string {
     .replace('Recraft ', '')
     .replace('Auto mode', 'Auto')
     .replace('Gemini 2.5 Flash', 'G2.5 Flash')
-    .replace('GPT Image 1', 'GPT-4o')
+    .replace('GPT Image 2', 'GPT Img 2')
+    .replace('GPT Image 1.5', 'GPT Img 1.5')
+    .replace('GPT Image 1', 'GPT Img 1')
     .replace('DALL·E 3', 'DALL·E 3');
 }
 
@@ -9620,6 +9634,7 @@ const STYLE_CONTEXT_OPTIONS = [
 const STYLE_TEST_MODEL_OPTIONS = [
   { label: 'Recraft V4', value: 'recraftv4' },
   { label: 'Recraft V3', value: 'recraftv3' },
+  { label: 'GPT Image 2', value: 'gpt-image-2' },
   { label: 'GPT Image 1.5', value: 'gpt-image-1.5' },
   { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
 ] as const;
@@ -9627,6 +9642,7 @@ const STYLE_TEST_MODEL_OPTIONS = [
 const STYLE_TEST_MODELS_WITH_ATTACHMENTS = new Set<string>([
   'recraftv4',
   'recraftv3',
+  'gpt-image-2',
   'gpt-image-1.5',
 ]);
 

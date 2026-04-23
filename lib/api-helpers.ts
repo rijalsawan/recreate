@@ -2,17 +2,32 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
-const ADMIN_EMAIL_ALLOWLIST = new Set(
-  (process.env.ADMIN_EMAILS || process.env.FONT_ADMIN_EMAILS || '')
-    .split(',')
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean)
-);
+/**
+ * Check if a user is an admin by querying the database directly.
+ * Use this in server components / API routes that already have the userId.
+ */
+export async function isAdminById(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+  return user?.role === 'ADMIN';
+}
 
-export function isAdminEmail(email: string | null | undefined): boolean {
-  const normalizedEmail = email?.trim().toLowerCase();
-  if (!normalizedEmail) return false;
-  return ADMIN_EMAIL_ALLOWLIST.has(normalizedEmail);
+/**
+ * Check if the session user is admin from the JWT role field (no extra DB query).
+ * Falls back to a DB check if the token predates the role field.
+ */
+export function isAdminSession(role: string | null | undefined): boolean {
+  return role === 'ADMIN';
+}
+
+/**
+ * @deprecated Use isAdminById or isAdminSession instead.
+ * Kept for backward compatibility during migration; always returns false now.
+ */
+export function isAdminEmail(_email: string | null | undefined): boolean {
+  return false;
 }
 
 /**
@@ -28,15 +43,19 @@ export async function getAuthSession() {
 }
 
 /**
- * Check if the authenticated user is an admin.
- * Admin users are configured by ADMIN_EMAILS or FONT_ADMIN_EMAILS env vars.
+ * Require admin role from session. Returns 403 response if not admin.
  */
-export function requireAdminAccess(email: string | null | undefined) {
-  if (!isAdminEmail(email)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+export async function requireAdminAccess(userId?: string, sessionRole?: string) {
+  // Fast path: role already in JWT
+  if (sessionRole === 'ADMIN') return null;
+
+  // Slow path: re-check DB (handles tokens issued before role was added)
+  if (userId) {
+    const isAdmin = await isAdminById(userId);
+    if (isAdmin) return null;
   }
 
-  return null;
+  return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
 /**

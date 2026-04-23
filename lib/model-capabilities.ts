@@ -103,6 +103,22 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     vectorize: false, eraseRegion: true, inpaint: true, outpaint: true,
     styles: false, attachments: true,
   },
+  'gpt-image-1.5': {
+    id: 'gpt-image-1.5', name: 'GPT Image 1.5',
+    generate: true, imageToImage: true,
+    removeBackground: true, replaceBackground: true,
+    upscaleCrisp: true, upscaleCreative: true,
+    vectorize: false, eraseRegion: true, inpaint: true, outpaint: true,
+    styles: false, attachments: true,
+  },
+  'gpt-image-2': {
+    id: 'gpt-image-2', name: 'GPT Image 2',
+    generate: true, imageToImage: true,
+    removeBackground: true, replaceBackground: true,
+    upscaleCrisp: true, upscaleCreative: true,
+    vectorize: false, eraseRegion: true, inpaint: true, outpaint: true,
+    styles: false, attachments: true,
+  },
   // ── Gemini (Free) ──
   'gemini-2.5-flash': {
     id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash',
@@ -178,6 +194,8 @@ export const MODEL_STYLE_SUPPORT: Record<string, string[]> = {
   // OpenAI — no native style API support
   'dall-e-3': [],
   'gpt-image-1': [],
+  'gpt-image-1.5': [],
+  'gpt-image-2': [],
   // Gemini (free) — no native style API support
   'gemini-2.5-flash': [],
   // Gemini — no native style API support
@@ -211,6 +229,8 @@ const NAME_TO_ID: Record<string, string> = {
   'Recraft V2 Vector': 'recraftv2_vector',
   'DALL·E 3': 'dall-e-3',
   'GPT Image 1': 'gpt-image-1',
+  'GPT Image 1.5': 'gpt-image-1.5',
+  'GPT Image 2': 'gpt-image-2',
   'Gemini 2.5 Flash': 'gemini-2.5-flash',
   'Nano Banana': 'nano-banana',
   'Nano Banana 2': 'nano-banana-2',

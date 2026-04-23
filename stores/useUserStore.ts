@@ -26,6 +26,7 @@ export const useUserStore = create<UserStore>((set, get) => ({
               ...user,
               credits: typeof data.credits === 'number' ? data.credits : user.credits,
               plan: (data.plan as 'free' | 'pro' | 'business') || user.plan,
+              role: (data.role as 'USER' | 'ADMIN') || user.role,
             },
           });
         }

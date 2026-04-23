@@ -1,6 +1,6 @@
 /**
  * OpenAI Image API service.
- * Uses gpt-image-1.5 for generation and editing.
+ * Uses gpt-image-2 for generation and editing by default.
  * Returns normalized responses matching Recraft's { data: [{ url }] } format.
  * Base64 images are returned as data URLs.
  */
@@ -11,6 +11,8 @@ const OPENAI_BASE = 'https://api.openai.com/v1';
 interface NormalizedResponse {
   data: { url: string }[];
 }
+
+type OpenAIImageModel = 'dall-e-3' | 'gpt-image-1' | 'gpt-image-1.5' | 'gpt-image-2';
 
 export class OpenAIRequestError extends Error {
   status: number;
@@ -129,7 +131,7 @@ export async function openaiGenerate(
   prompt: string,
   size = '1024x1024',
   n = 1,
-  model = 'gpt-image-1.5',
+  model: OpenAIImageModel = 'gpt-image-2',
 ): Promise<NormalizedResponse> {
   const response = await openaiRequest('/images/generations', {
     model,
@@ -148,9 +150,10 @@ export async function openaiEdit(
   prompt: string,
   mask?: File | Blob | null,
   size?: string,
+  model: Exclude<OpenAIImageModel, 'dall-e-3'> = 'gpt-image-2',
 ): Promise<NormalizedResponse> {
   const form = new FormData();
-  form.append('model', 'gpt-image-1.5');
+  form.append('model', model);
   form.append('image[]', image);
   form.append('prompt', prompt);
   form.append('quality', 'low');
@@ -220,7 +223,7 @@ export async function openaiInpaint(
   mask: File | Blob,
   prompt: string,
 ): Promise<NormalizedResponse> {
-  return openaiEdit(image, prompt, mask);
+  return openaiEdit(image, prompt, mask, undefined, 'gpt-image-2');
 }
 
 // ─── Image-to-Image / Remix ──────────────────────────────────────────────
@@ -242,5 +245,5 @@ export async function openaiOutpaint(
   const expandPrompt = prompt.trim()
     ? `Expand this image outward. New content must follow this request: ${prompt}. Only generate in transparent mask regions. Preserve the original central image exactly. Match perspective, lighting, texture, and color continuity from adjacent pixels so the extension looks native.`
     : 'Expand this image outward. Only generate in transparent mask regions. Preserve the original central image exactly. Fill new regions by naturally continuing perspective, lighting, texture, and color from nearby image context.';
-  return openaiEdit(image, expandPrompt, mask);
+  return openaiEdit(image, expandPrompt, mask, undefined, 'gpt-image-2');
 }

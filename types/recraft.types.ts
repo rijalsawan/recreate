@@ -11,6 +11,8 @@ export type RecraftModel =
   | 'recraftv2_vector'
   | 'dall-e-3'
   | 'gpt-image-1'
+  | 'gpt-image-1.5'
+  | 'gpt-image-2'
   | 'gemini-2.5-flash'
   | 'nano-banana'
   | 'nano-banana-2'
@@ -131,6 +133,8 @@ export const RECRAFT_PRICING: Record<string, number> = {
   recraftv2_vector: 44,
   'dall-e-3': 40,
   'gpt-image-1': 50,
+  'gpt-image-1.5': 50,
+  'gpt-image-2': 50,
   'gemini-2.5-flash': 0,
   'nano-banana': 45,
   'nano-banana-2': 60,

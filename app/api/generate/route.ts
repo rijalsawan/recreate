@@ -45,8 +45,8 @@ function isRecraftV4FamilyModel(model: string): boolean {
     || model === 'recraftv4_pro_vector';
 }
 
-function isOpenAIModel(model: string): boolean {
-  return model === 'dall-e-3' || model === 'gpt-image-1' || model === 'gpt-image-1.5';
+function isOpenAIModel(model: string): model is 'dall-e-3' | 'gpt-image-1' | 'gpt-image-1.5' | 'gpt-image-2' {
+  return model === 'dall-e-3' || model === 'gpt-image-1' || model === 'gpt-image-1.5' || model === 'gpt-image-2';
 }
 
 function isGeminiModel(model: string): model is GeminiModel {
@@ -77,6 +77,8 @@ type GenerateRequestBody = {
   aiApiModel?: string;
   aiApiStyle?: string;
   aiApiSubstyle?: string;
+  landingSlot?: string;
+  saveToDatabase?: boolean | string;
   attachments?: File[];
 };
 
@@ -116,6 +118,16 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function parseBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  return fallback;
+}
+
 function buildGeneratedImageMetadata(body: GenerateRequestBody): Prisma.InputJsonValue {
   const aiFeedSource = normalizeOptionalString(body.aiFeedSource);
   const aiCategory = normalizeOptionalString(body.aiCategory);
@@ -127,6 +139,8 @@ function buildGeneratedImageMetadata(body: GenerateRequestBody): Prisma.InputJso
 
   const metadata: Record<string, string> = {};
 
+  const landingSlot = normalizeOptionalString(body.landingSlot);
+
   if (aiFeedSource) metadata.aiFeedSource = aiFeedSource;
   if (aiCategory) metadata.aiCategory = aiCategory;
   if (aiStyleKey) metadata.aiStyleKey = aiStyleKey;
@@ -134,8 +148,29 @@ function buildGeneratedImageMetadata(body: GenerateRequestBody): Prisma.InputJso
   if (aiApiModel) metadata.aiApiModel = aiApiModel;
   if (aiApiStyle) metadata.aiApiStyle = aiApiStyle;
   if (aiApiSubstyle) metadata.aiApiSubstyle = aiApiSubstyle;
+  if (landingSlot) metadata.landingSlot = landingSlot;
 
   return metadata;
+}
+
+// Retry a Prisma operation up to maxAttempts times on transient Accelerate errors (P6000).
+async function withPrismaRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const isAccelerateError =
+        err instanceof Error &&
+        'code' in err &&
+        (err as { code: unknown }).code === 'P6000';
+      if (!isAccelerateError || attempt === maxAttempts) break;
+      // Back off: 500ms, 1000ms, ...
+      await new Promise<void>((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+  throw lastError;
 }
 
 function isRgbTuple(value: unknown): value is [number, number, number] {
@@ -207,6 +242,10 @@ function hasStyleHint(prompt: string | undefined, styleName: string): boolean {
   return typeof prompt === 'string' && prompt.toLowerCase().includes(styleName.toLowerCase());
 }
 
+function isVectorModel(model: string): boolean {
+  return model.endsWith('_vector');
+}
+
 /**
  * Resolve the correct Recraft model for the request.
  * When a specific style is selected (not 'any'), the style's native model
@@ -269,6 +308,7 @@ export async function POST(request: NextRequest) {
       aiApiModel: formData.get('aiApiModel') as string || undefined,
       aiApiStyle: formData.get('aiApiStyle') as string || undefined,
       aiApiSubstyle: formData.get('aiApiSubstyle') as string || undefined,
+      saveToDatabase: formData.get('saveToDatabase') as string || undefined,
     };
     // Attachments are sent as image files — for OpenAI image edits with reference
     const attachments = formData.getAll('attachments') as File[];
@@ -283,6 +323,7 @@ export async function POST(request: NextRequest) {
   const imageCount = Math.min(Math.max(body.n || 1, 1), 6);
   const cost = calculateCost('generate', model, imageCount);
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  const shouldSaveToDatabase = parseBoolean(body.saveToDatabase, true);
 
   if (!prompt) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -320,7 +361,13 @@ export async function POST(request: NextRequest) {
       const basePrompt = typeof params.prompt === 'string' ? params.prompt.trim() : '';
       params.prompt = basePrompt ? `${basePrompt}. Style: ${styleName}.` : `Style: ${styleName}.`;
     }
-    params.style = 'any';
+    // Vector models reject style:'any' — omit the field entirely.
+    // Non-vector V4/OpenAI/Gemini models also don't use the style field via API.
+    if (isVectorModel(model)) {
+      delete params.style;
+    } else {
+      params.style = 'any';
+    }
     delete params.substyle;
   }
 
@@ -375,10 +422,17 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (hasAttachments && isOpenAIModel(model) && HAS_OPENAI) {
-      // Use edit endpoint with reference images when attachments present (GPT Image 1 only)
-      result = await openaiEdit(firstAttachment as File, params.prompt, null, params.size);
+      // DALL·E 3 does not support edit/attachment flow, so use GPT Image 2 for attachment edits.
+      const openaiEditModel = model === 'dall-e-3' ? 'gpt-image-2' : model;
+      result = await openaiEdit(firstAttachment as File, params.prompt, null, params.size, openaiEditModel);
     } else if (isOpenAIModel(model) && HAS_OPENAI) {
-      const openaiModel = model === 'dall-e-3' ? 'dall-e-3' : 'gpt-image-1';
+      const openaiModel = model === 'dall-e-3'
+        ? 'dall-e-3'
+        : model === 'gpt-image-2'
+          ? 'gpt-image-2'
+          : model === 'gpt-image-1.5'
+            ? 'gpt-image-1.5'
+            : 'gpt-image-1';
       // DALL-E 3 only supports n=1, so loop for multiple images
       if (openaiModel === 'dall-e-3' && imageCount > 1) {
         const results = await Promise.all(
@@ -425,7 +479,7 @@ export async function POST(request: NextRequest) {
       result = await recraft.generateImage(params);
     } else if (HAS_OPENAI) {
       // Fallback: unknown model with OpenAI key → use OpenAI
-      result = await openaiGenerate(params.prompt, params.size, params.n, 'gpt-image-1');
+      result = await openaiGenerate(params.prompt, params.size, params.n, 'gpt-image-2');
     } else {
       result = await mockGenerateImage(params);
     }
@@ -468,8 +522,26 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
-  // Upload to Cloudinary and save to DB
-  const savedImages = await Promise.all(
+  try {
+    await withPrismaRetry(() =>
+      consumeUsageAndCredits({
+        userId: session.user.id,
+        operation: 'generate',
+        creditsUsed: cost,
+        transactionType: 'GENERATION',
+        description: `Generated ${imageCount} image(s) with ${model}`,
+      })
+    );
+  } catch (billingError) {
+    console.error('[generate] Failed to consume credits after retries', billingError);
+    return NextResponse.json(
+      { error: 'Unable to finalize billing for this generation. Please try again.' },
+      { status: 503 },
+    );
+  }
+
+  // Upload to Cloudinary first. DB save can be skipped for manual-save flows.
+  const generatedImages = await Promise.all(
     result.data.map(async (img) => {
       const rawUrl = img.url || '';
       // Upload base64 data URLs and external URLs to Cloudinary for persistent, compact storage
@@ -478,35 +550,39 @@ export async function POST(request: NextRequest) {
         if (rawUrl) imageUrl = await uploadToCloudinary(rawUrl, { folder: 'recreate/generated' });
       } catch { /* keep original URL if Cloudinary upload fails */ }
 
-      return prisma.generatedImage.create({
-        data: {
-          userId: session.user.id,
-          projectId: body.projectId || null,
-          prompt: body.prompt,
-          model,
-          style: body.style || 'any',
-          imageUrl,
-          width: parseInt(params.size?.split('x')[0] || '1024'),
-          height: parseInt(params.size?.split('x')[1] || '1024'),
-          format: model.includes('vector') ? 'VECTOR' : 'RASTER',
-          creditsUsed: Math.ceil(cost / imageCount),
-          metadata: buildGeneratedImageMetadata(body),
-        },
-        select: { id: true, imageUrl: true },
-      });
+      if (!shouldSaveToDatabase) {
+        return { id: null as string | null, imageUrl, savedToDb: false };
+      }
+
+      try {
+        const record = await withPrismaRetry(() =>
+          prisma.generatedImage.create({
+            data: {
+              userId: session.user.id,
+              projectId: body.projectId || null,
+              prompt: body.prompt,
+              model,
+              style: body.style || 'any',
+              imageUrl,
+              width: parseInt(params.size?.split('x')[0] || '1024'),
+              height: parseInt(params.size?.split('x')[1] || '1024'),
+              format: model.includes('vector') ? 'VECTOR' : 'RASTER',
+              creditsUsed: Math.ceil(cost / imageCount),
+              metadata: buildGeneratedImageMetadata(body),
+            },
+            select: { id: true, imageUrl: true },
+          })
+        );
+        return { id: record.id, imageUrl: record.imageUrl, savedToDb: true };
+      } catch {
+        console.error('[generate] Failed to save generated image to DB after retries');
+        return { id: null as string | null, imageUrl, savedToDb: false };
+      }
     })
   );
 
-  await consumeUsageAndCredits({
-    userId: session.user.id,
-    operation: 'generate',
-    creditsUsed: cost,
-    transactionType: 'GENERATION',
-    description: `Generated ${imageCount} image(s) with ${model}`,
-  });
-
   return NextResponse.json({
-    images: savedImages,
+    images: generatedImages,
     creditsUsed: cost,
   });
 }

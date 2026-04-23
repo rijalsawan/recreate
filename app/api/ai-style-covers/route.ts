@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
   const [session, error] = await getAuthSession();
   if (error) return error;
 
-  const adminError = requireAdminAccess(session.user.email);
+  const adminError = await requireAdminAccess(session.user.id, session.user.role);
   if (adminError) return adminError;
 
   const body = await request.json().catch(() => ({}));
@@ -98,7 +98,7 @@ export async function DELETE() {
   const [session, error] = await getAuthSession();
   if (error) return error;
 
-  const adminError = requireAdminAccess(session.user.email);
+  const adminError = await requireAdminAccess(session.user.id, session.user.role);
   if (adminError) return adminError;
 
   await prisma.styleCover.deleteMany({

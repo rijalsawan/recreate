@@ -24,6 +24,8 @@ export async function uploadToCloudinary(
     public_id: options?.publicId,
     resource_type: 'image',
     overwrite: true,
+    quality: 100,         // Store at full original quality — no upload-time compression
+    flags: 'preserve_transparency', // Preserve alpha channel for PNG/WebP images
   });
 
   return result.secure_url;
