@@ -27,6 +27,7 @@ import { getModelCapabilities, getModelId, type ModelCapabilities } from '@/lib/
 import { toast } from 'sonner';
 import { signOut } from 'next-auth/react';
 import { PricingModal } from '@/components/shared/PricingModal';
+import { PixiCanvasBoard } from '@/components/canvas/PixiCanvasBoard';
 
 type SelectedStyleMeta = {
   name: string;
@@ -2272,13 +2273,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     rafId.current = requestAnimationFrame(flushTransformToState);
   }, [applyLiveTransform, flushTransformToState]);
 
-  // Attach non-passive wheel listener
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    el.addEventListener('wheel', handleCanvasWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleCanvasWheel);
-  }, [handleCanvasWheel]);
+  // Wheel events are handled directly by the PixiJS canvas element (raw addEventListener in usePixiCanvas)
 
   // Prevent macOS horizontal history swipe from hijacking editor interactions
   // when the pointer is over side panels, prompt bar, or tool controls.
@@ -3491,6 +3486,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return () => window.removeEventListener('keydown', handler);
   }, [handleGenerate, selectedImageId, historyUndo, historyRedo, pushHistory]);
 
+  // PixiCanvasBoard dispatches 'pixi:textadd' (bubbling) when the text tool clicks empty canvas
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const handler = (e: Event) => {
+      const { clientX, clientY } = (e as CustomEvent<{ clientX: number; clientY: number }>).detail;
+      addTextAtCanvasPoint(clientX, clientY, selectedImageId ?? null);
+    };
+    el.addEventListener('pixi:textadd', handler as EventListener);
+    return () => el.removeEventListener('pixi:textadd', handler as EventListener);
+  }, [addTextAtCanvasPoint, selectedImageId]);
+
   const toggleDropdown = (name: 'model' | 'ratio' | 'count' | 'shapes' | 'palette') => {
     if (activeDropdown === name) setActiveDropdown(null);
     else setActiveDropdown(name);
@@ -3562,6 +3569,92 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         : `${panX}px ${panY}px`,
   }), [canvasBg, zoom, panX, panY]);
 
+  // ── PixiJS canvas callbacks ───────────────────────────────────────────────
+  const handlePixiImageMoved = useCallback((id: string, x: number, y: number) => {
+    setCanvasImages((prev) => {
+      const next = prev.map((img) => img.id === id ? { ...img, x: Math.round(x), y: Math.round(y) } : img);
+      pushHistory('Moved image', next, id, canvasTextsRef.current, id);
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiImageResized = useCallback((id: string, x: number, y: number, w: number, h: number) => {
+    setCanvasImages((prev) => {
+      const next = prev.map((img) => img.id === id ? { ...img, x, y, width: w, height: h } : img);
+      pushHistory('Resized image', next, id, canvasTextsRef.current, id);
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiTextMoved = useCallback((id: string, x: number, y: number) => {
+    setCanvasTexts((prev) => {
+      const next = prev.map((t) => t.id === id ? { ...t, x: Math.round(x), y: Math.round(y) } : t);
+      pushHistory('Moved text', canvasImagesRef.current, id, next, null);
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiTextResized = useCallback((id: string, x: number, y: number, w: number, h: number) => {
+    setCanvasTexts((prev) => {
+      const next = prev.map((t) => t.id === id ? { ...t, x, y, width: w, height: h } : t);
+      pushHistory('Resized text', canvasImagesRef.current, id, next, null);
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiStrokeMoved = useCallback((id: string, offsetX: number, offsetY: number) => {
+    setBrushStrokes((prev) => {
+      const next = prev.map((s) => s.id === id ? { ...s, offsetX: Math.round(offsetX), offsetY: Math.round(offsetY) } : s);
+      const moved = next.find((s) => s.id === id);
+      if (moved) {
+        const histImageId = moved.historyImageId ?? null;
+        pushHistory('Moved stroke', undefined, histImageId, undefined, histImageId, next, id);
+      }
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiBrushStrokeAdded = useCallback((stroke: BrushStroke) => {
+    setBrushStrokes((prev) => {
+      const next = [...prev, stroke];
+      const drawLabel = stroke.kind === 'brush' ? 'Drew brush stroke' : `Drew ${stroke.kind}`;
+      pushHistory(drawLabel, canvasImagesRef.current, stroke.historyImageId ?? null, canvasTextsRef.current, stroke.historyImageId ?? null, next, stroke.id);
+      return next;
+    });
+    setSelectedStrokeId(stroke.id);
+  }, [pushHistory]);
+
+  const handlePixiBrushStrokesChanged = useCallback((strokes: BrushStroke[]) => {
+    setBrushStrokes(strokes);
+    pushHistory('Erased drawing', canvasImagesRef.current, null, canvasTextsRef.current, null, strokes, selectedStrokeId);
+  }, [pushHistory, selectedStrokeId]);
+
+  const handlePixiViewportChange = useCallback((z: number, px: number, py: number) => {
+    setZoom(z);
+    setPanX(px);
+    setPanY(py);
+    liveZoom.current = z;
+    livePanX.current = px;
+    livePanY.current = py;
+  }, []);
+
+  const handlePixiEndEditText = useCallback((id: string, oldContent: string, newContent: string) => {
+    setEditingTextId(null);
+    if (oldContent === newContent) return;
+    setCanvasTexts((prev) => {
+      const next = prev.map((t) => t.id === id ? { ...t, content: newContent } : t);
+      pushHistory('Edited text content', canvasImagesRef.current, id, next, null);
+      return next;
+    });
+  }, [pushHistory]);
+
+  const handlePixiDeselect = useCallback(() => {
+    setSelectedImageId(null);
+    setSelectedTextId(null);
+    setSelectedStrokeId(null);
+    setEditingTextId(null);
+  }, []);
+
   return (
     <div 
       className="h-screen w-screen bg-[#0A0A0B] relative overflow-hidden flex flex-col font-sans select-none text-foreground"
@@ -3579,10 +3672,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           !isCanvasCustomCursorMode && activeTool === 'select' && !spaceHeld && !isPanning ? "cursor-default" : "",
           !isCanvasCustomCursorMode && activeTool === 'text' && !spaceHeld && !isPanning ? "cursor-text" : "",
         )}
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleCanvasMouseMove}
-        onMouseUp={handleCanvasMouseUp}
-        onMouseLeave={handleCanvasMouseLeave}
       >
         {/* Canvas background pattern — moves with pan/zoom */}
         {canvasBg !== 'none' && (
@@ -3592,638 +3681,158 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           />
         )}
 
-        {/* Transformed canvas layer — transform is applied imperatively via canvasInnerRef
-             to avoid React re-renders on every wheel/mousemove event */}
-        <div
-          ref={canvasInnerRef}
-          className="absolute pointer-events-none"
-          style={{ transformOrigin: '0 0', willChange: 'transform' }}
-        >
-          {/* Snap guide lines */}
-          {snapLines.map((line, i) => (
-            <div
-              key={i}
-              className="absolute bg-primary pointer-events-none z-30"
-              style={
-                line.axis === 'x'
-                  ? { left: line.pos, top: -10000, width: 1, height: 20000 }
-                  : { top: line.pos, left: -10000, height: 1, width: 20000 }
-              }
-            />
-          ))}
+        <PixiCanvasBoard
+            canvasImages={canvasImages}
+            canvasTexts={canvasTexts}
+            brushStrokes={brushStrokes}
+            selectedImageId={selectedImageId}
+            selectedTextId={selectedTextId}
+            selectedStrokeId={selectedStrokeId}
+            editingTextId={editingTextId}
+            zoom={zoom}
+            panX={panX}
+            panY={panY}
+            activeTool={activeTool}
+            spaceHeld={spaceHeld}
+            drawMode={drawMode}
+            brushDrawColor={brushDrawColor}
+            brushDrawSize={brushDrawSize}
+            shapeFillEnabled={shapeFillEnabled}
+            onSelectImage={setSelectedImageId}
+            onSelectText={setSelectedTextId}
+            onSelectStroke={setSelectedStrokeId}
+            onDeselect={handlePixiDeselect}
+            onImageMoved={handlePixiImageMoved}
+            onImageResized={handlePixiImageResized}
+            onTextMoved={handlePixiTextMoved}
+            onTextResized={handlePixiTextResized}
+            onStrokeMoved={handlePixiStrokeMoved}
+            onBrushStrokeAdded={handlePixiBrushStrokeAdded}
+            onBrushStrokesChanged={handlePixiBrushStrokesChanged}
+            onViewportChange={handlePixiViewportChange}
+            onStartEditText={setEditingTextId}
+            onEndEditText={handlePixiEndEditText}
+            computeSnap={computeSnap}
+            pushHistory={pushHistory}
+        />
 
-          {/* Canvas images */}
-          {canvasImages.map((img) => {
-            const isSelected = img.id === selectedImageId;
-            return (
-              <div
-                key={img.id}
-                ref={(el) => { if (el) imageElemRefs.current.set(img.id, el); else imageElemRefs.current.delete(img.id); }}
-                className={cn(
-                  "absolute pointer-events-auto",
-                  isCanvasCustomCursorMode ? "cursor-none" : activeTool === 'select' && !spaceHeld ? "cursor-move" : "",
-                )}
-                style={{ left: img.x, top: img.y, width: img.width, height: img.height }}
-                onMouseDown={(e) => handleImageMouseDown(e, img.id)}
+        {/* ── World-space overlay container ─────────────────────────────────────
+             Renders above both the DOM canvas and the PixiJS canvas.
+             Uses React state transform — acceptable since these panels are only
+             active when the user isn't doing fast pan/zoom. */}
+        {isImageSelected && selectedImage && (activeSubPanel === 'edit-area' || activeSubPanel === 'outpaint') && (
+          <div
+            className="absolute pointer-events-none"
+            style={{ transformOrigin: '0 0', transform: `translate(${panX}px, ${panY}px) scale(${zoom})` }}
+          >
+            {/* Mask canvas overlay — captures draw events for inpaint/edit-area */}
+            {activeSubPanel === 'edit-area' && (
+              <canvas
+                ref={maskCanvasRef}
+                width={selectedImage.width}
+                height={selectedImage.height}
+                className={cn("absolute pointer-events-auto z-20", isCanvasCustomCursorMode ? "cursor-none" : "cursor-crosshair")}
+                style={{ left: selectedImage.x, top: selectedImage.y, width: selectedImage.width, height: selectedImage.height }}
+                onMouseDown={handleMaskMouseDown}
+              />
+            )}
+
+            {/* Lasso in-progress preview SVG */}
+            {activeSubPanel === 'edit-area' && lassoPreviewPoints.length > 1 && (
+              <svg
+                className="absolute pointer-events-none"
+                style={{ left: selectedImage.x, top: selectedImage.y, width: selectedImage.width, height: selectedImage.height, overflow: 'visible', zIndex: 21 }}
               >
-                {img.isFrame ? (
-                  /* ── Frame element ── */
-                  <div
-                    className={cn(
-                      "w-full h-full rounded-lg transition-shadow",
-                      isSelected
-                        ? "border-2 border-primary"
-                        : contextImageId === img.id
-                          ? "border border-primary/60"
-                          : "border border-dashed border-white/30 hover:border-white/50",
-                    )}
-                    style={{ background: 'rgba(255,255,255,0.03)' }}
-                  >
-                    {/* Center label */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none select-none">
-                      <Frame className="w-6 h-6 text-white/20" />
-                      <span className="text-[11px] text-white/20 font-medium">{img.width} × {img.height}</span>
-                    </div>
-                    {contextImageId === img.id && !isSelected && (
-                      <div className="absolute -top-5 left-0 text-[10px] text-primary/70 font-medium select-none whitespace-nowrap flex items-center gap-1">
-                        <Frame className="w-3 h-3" /> Context
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  /* ── Image element ── */
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={img.url || undefined}
-                    alt={img.prompt}
-                    className={cn(
-                      "w-full h-full object-cover rounded-lg transition-shadow",
-                      !img.url && "bg-white/5",
-                      isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-[#0A0A0B]" : "hover:ring-1 hover:ring-white/20",
-                    )}
-                    draggable={false}
-                    style={(() => {
-                      const a = img.adjustments;
-                      if (!a) return undefined;
-                      const s: React.CSSProperties = {};
-                      const filters: string[] = [];
-                      if (a.hue !== 180) filters.push(`hue-rotate(${a.hue - 180}deg)`);
-                      if (a.saturation !== 100) filters.push(`saturate(${a.saturation / 100})`);
-                      if (a.brightness !== 100) filters.push(`brightness(${a.brightness / 100})`);
-                      if (a.contrast !== 100) filters.push(`contrast(${a.contrast / 100})`);
-                      if (filters.length > 0) s.filter = filters.join(' ');
-                      if (a.opacity !== 100) s.opacity = a.opacity / 100;
-                      return Object.keys(s).length > 0 ? s : undefined;
-                    })()}
-                  />
-                )}
-                {/* Resize handles + dimension label */}
-                {isSelected && (
-                  <>
-                    {RESIZE_HANDLES.map(({ id: hid, sx, tf, cur }) => (
-                      <div
-                        key={hid}
-                        className="absolute z-10 pointer-events-auto"
-                        data-cursor-override
-                        style={{ ...sx, transform: tf, cursor: cur, '--cursor-override': cur, width: resizeHandleHitSize, height: resizeHandleHitSize } as React.CSSProperties}
-                        onPointerEnter={beginHandleCursorHover}
-                        onPointerLeave={endHandleCursorHover}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setIsHandleCursorDragging(true);
-                          document.documentElement.style.cursor = cur;
-                          resizeRef.current = {
-                            type: 'image',
-                            id: img.id,
-                            handle: hid,
-                            startX: e.clientX,
-                            startY: e.clientY,
-                            origX: img.x,
-                            origY: img.y,
-                            origW: img.width,
-                            origH: img.height,
-                          };
-                        }}
-                      >
-                        <div
-                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-primary rounded-sm shadow-sm transition-transform hover:scale-105"
-                          style={{
-                            width: resizeHandleVisibleSize,
-                            height: resizeHandleVisibleSize,
-                            borderWidth: resizeHandleVisibleBorderWidth,
-                            borderStyle: 'solid',
-                          }}
-                        />
-                      </div>
-                    ))}
-                    <div className="absolute -top-6 left-0 text-[11px] font-medium text-primary/70 select-none whitespace-nowrap pointer-events-none">
-                      {img.width} × {img.height}
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
+                <polyline
+                  points={lassoPreviewPoints.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="rgba(124,58,237,0.2)"
+                  stroke="rgba(124,58,237,0.9)"
+                  strokeWidth="2"
+                  strokeDasharray="6 3"
+                  strokeLinecap="round"
+                />
+              </svg>
+            )}
 
-          {/* ── SVG Brush Strokes Layer ──
-               Each stroke is an absolutely-positioned div sized to its bounding box
-               so SVG content always stays within the element bounds (no overflow clipping issues). */}
-          {brushStrokes.map((stroke) => {
-            const kind = stroke.kind || 'brush';
-            if (stroke.points.length < (kind === 'brush' ? 1 : 2)) return null;
-            const isStrokeSelected = stroke.id === selectedStrokeId;
-            const pad = stroke.size / 2 + (kind === 'arrow' ? Math.max(10, stroke.size * 3) : 6);
-            const xs = stroke.points.map((p) => p.x);
-            const ys = stroke.points.map((p) => p.y);
-            const rawMinX = Math.min(...xs);
-            const rawMinY = Math.min(...ys);
-            const rawMaxX = Math.max(...xs);
-            const rawMaxY = Math.max(...ys);
-            const svgW = rawMaxX - rawMinX + pad * 2;
-            const svgH = rawMaxY - rawMinY + pad * 2;
-            // Path coords are local to the div (shifted by rawMin - pad)
-            const start = stroke.points[0];
-            const end = stroke.points[stroke.points.length - 1] || start;
-            const sx = start.x - rawMinX + pad;
-            const sy = start.y - rawMinY + pad;
-            const ex = end.x - rawMinX + pad;
-            const ey = end.y - rawMinY + pad;
-
-            const brushPath = stroke.points.length < 2 ? '' : stroke.points.reduce((acc, p, i) => {
-              const lx = p.x - rawMinX + pad;
-              const ly = p.y - rawMinY + pad;
-              if (i === 0) return `M ${lx} ${ly}`;
-              const prev = stroke.points[i - 1];
-              const px = prev.x - rawMinX + pad;
-              const py = prev.y - rawMinY + pad;
-              const mx = (px + lx) / 2;
-              const my = (py + ly) / 2;
-              return `${acc} Q ${px} ${py} ${mx} ${my}`;
-            }, '');
-
-            const strokeNode = (() => {
-              if (kind === 'brush') {
-                return (
-                  <path
-                    d={brushPath}
-                    stroke={stroke.color}
-                    strokeWidth={stroke.size}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                );
-              }
-
-              if (kind === 'line') {
-                return <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={stroke.color} strokeWidth={stroke.size} strokeLinecap="round" />;
-              }
-
-              if (kind === 'arrow') {
-                const angle = Math.atan2(ey - sy, ex - sx);
-                const head = Math.max(10, stroke.size * 2.6);
-                const a1 = angle - Math.PI / 7;
-                const a2 = angle + Math.PI / 7;
-                const hx1 = ex - head * Math.cos(a1);
-                const hy1 = ey - head * Math.sin(a1);
-                const hx2 = ex - head * Math.cos(a2);
-                const hy2 = ey - head * Math.sin(a2);
-                return (
-                  <>
-                    <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={stroke.color} strokeWidth={stroke.size} strokeLinecap="round" />
-                    <path d={`M ${hx1} ${hy1} L ${ex} ${ey} L ${hx2} ${hy2}`} stroke={stroke.color} strokeWidth={stroke.size} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                  </>
-                );
-              }
-
-              if (kind === 'rectangle') {
-                const rx = Math.min(sx, ex);
-                const ry = Math.min(sy, ey);
-                const rw = Math.max(1, Math.abs(ex - sx));
-                const rh = Math.max(1, Math.abs(ey - sy));
-                const fillColor = stroke.fill ? hexToRgba(stroke.fillColor || stroke.color, 0.32) : 'none';
-                return <rect x={rx} y={ry} width={rw} height={rh} stroke={stroke.color} strokeWidth={stroke.size} fill={fillColor} />;
-              }
-
-              const cx = (sx + ex) / 2;
-              const cy = (sy + ey) / 2;
-              const rx = Math.max(1, Math.abs(ex - sx) / 2);
-              const ry = Math.max(1, Math.abs(ey - sy) / 2);
-              const fillColor = stroke.fill ? hexToRgba(stroke.fillColor || stroke.color, 0.32) : 'none';
-              return <ellipse cx={cx} cy={cy} rx={rx} ry={ry} stroke={stroke.color} strokeWidth={stroke.size} fill={fillColor} />;
-            })();
-            return (
-              <div
-                key={stroke.id}
-                ref={(el) => { if (el) strokeElemRefs.current.set(stroke.id, el); else strokeElemRefs.current.delete(stroke.id); }}
-                className="absolute pointer-events-auto"
-                style={{
-                  left: rawMinX + stroke.offsetX - pad,
-                  top: rawMinY + stroke.offsetY - pad,
-                  width: svgW,
-                  height: svgH,
-                  cursor: isCanvasCustomCursorMode ? 'none' : activeTool === 'select' ? 'move' : undefined,
-                  outline: isStrokeSelected ? '1.5px dashed hsl(var(--primary))' : undefined,
-                  outlineOffset: '2px',
-                }}
-                onMouseDown={(e) => {
-                  if (activeTool === 'brush' || activeTool === 'shapes') return;
-                  e.stopPropagation();
-                  setSelectedStrokeId(stroke.id);
-                  setSelectedImageId(null);
-                  if (activeTool === 'select') {
-                    dragStrokeRef.current = { id: stroke.id, startX: e.clientX, startY: e.clientY, origOffsetX: stroke.offsetX, origOffsetY: stroke.offsetY, liveOffsetX: stroke.offsetX, liveOffsetY: stroke.offsetY };
-                  }
-                }}
-              >
-                <svg
-                  width={svgW}
-                  height={svgH}
-                  style={{ display: 'block', opacity: stroke.opacity / 100 }}
-                  className="pointer-events-none"
-                >
-                  {strokeNode}
-                </svg>
-              </div>
-            );
-          })}
-
-          {/* Live brush stroke preview while drawing */}
-
-          {/* ── Canvas Text Elements ── */}
-          {canvasTexts.map((txt) => {
-            const isSelected = txt.id === selectedTextId;
-            const isEditing = txt.id === editingTextId;
-            return (
-              <div
-                key={txt.id}
-                ref={(el) => {
-                  if (el) textElemRefs.current.set(txt.id, el);
-                  else textElemRefs.current.delete(txt.id);
-                }}
-                className={cn(
-                  "absolute pointer-events-auto",
-                  isCanvasCustomCursorMode ? "cursor-none" : (activeTool === 'select' || activeTool === 'text') && !spaceHeld ? "cursor-move" : "",
-                )}
-                style={{
-                  left: txt.x,
-                  top: txt.y,
-                  width: txt.width,
-                  height: txt.height ? txt.height : undefined,
-                  minHeight: 20,
-                  overflow: txt.height ? 'hidden' : 'visible',
-                  outline: isSelected ? '2px solid hsl(var(--primary))' : undefined,
-                  outlineOffset: '4px',
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  if (e.button !== 0) return;
-                  if (activeTool === 'hand' || spaceHeld) {
-                    panRef.current = { active: true, startX: e.clientX, startY: e.clientY, origPanX: livePanX.current, origPanY: livePanY.current };
-                    setIsPanning(true);
-                    return;
-                  }
-                  setSelectedTextId(txt.id);
-                  setSelectedImageId(null);
-                  setSelectedStrokeId(null);
-                  if ((activeTool === 'select' || activeTool === 'text') && !isEditing) {
-                    dragTextRef.current = { id: txt.id, startX: e.clientX, startY: e.clientY, origX: txt.x, origY: txt.y };
-                  }
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  setEditingTextId(txt.id);
-                  setSelectedTextId(txt.id);
-                }}
-              >
-                {isEditing ? (
-                  <textarea
-                    autoFocus
-                    value={txt.content}
-                    onFocus={() => {
-                      textEditStartRef.current.set(txt.id, txt.content);
-                    }}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setCanvasTexts((prev) => prev.map((t) => t.id === txt.id ? { ...t, content: val } : t));
-                    }}
-                    onBlur={(e) => {
-                      setEditingTextId(null);
-                      const startValue = textEditStartRef.current.get(txt.id);
-                      textEditStartRef.current.delete(txt.id);
-                      if (startValue === undefined || startValue === e.currentTarget.value) return;
-                      const historyImageId = canvasTexts.find((t) => t.id === txt.id)?.historyImageId ?? txt.historyImageId ?? null;
-                      pushHistory('Edited text content', canvasImages, txt.id, canvasTexts, historyImageId);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') setEditingTextId(null);
-                    }}
-                    className="w-full bg-transparent border-none outline-none resize-none overflow-hidden"
-                    style={{
-                      fontFamily: `'${txt.fontFamily}', sans-serif`,
-                      fontSize: txt.fontSize,
-                      fontWeight: txt.fontWeight,
-                      color: `#${txt.color}`,
-                      textAlign: txt.align,
-                      lineHeight: txt.lineHeight,
-                      letterSpacing: txt.letterSpacing,
-                      opacity: txt.opacity / 100,
-                      caretColor: `#${txt.color}`,
-                      minHeight: txt.fontSize * 1.5,
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="whitespace-pre-wrap break-words select-none"
-                    style={{
-                      fontFamily: `'${txt.fontFamily}', sans-serif`,
-                      fontSize: txt.fontSize,
-                      fontWeight: txt.fontWeight,
-                      color: `#${txt.color}`,
-                      textAlign: txt.align,
-                      lineHeight: txt.lineHeight,
-                      letterSpacing: txt.letterSpacing,
-                      opacity: txt.opacity / 100,
-                    }}
-                  >
-                    {txt.content}
-                  </div>
-                )}
-                {/* Resize handles + dimension readout */}
-                {isSelected && !isEditing && (
-                  <>
-                    {RESIZE_HANDLES.map(({ id: hid, sx, tf, cur }) => (
-                      <div
-                        key={hid}
-                        className="absolute z-10 pointer-events-auto"
-                        data-cursor-override
-                        style={{ ...sx, transform: tf, cursor: cur, '--cursor-override': cur, width: resizeHandleHitSize, height: resizeHandleHitSize } as React.CSSProperties}
-                        onPointerEnter={beginHandleCursorHover}
-                        onPointerLeave={endHandleCursorHover}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setIsHandleCursorDragging(true);
-                          document.documentElement.style.cursor = cur;
-                          const parentEl = e.currentTarget.parentElement!;
-                          const parentRect = parentEl.getBoundingClientRect();
-                          const currentH = parentRect.height / liveZoom.current;
-                          resizeRef.current = {
-                            type: 'text',
-                            id: txt.id,
-                            handle: hid,
-                            startX: e.clientX,
-                            startY: e.clientY,
-                            origX: txt.x,
-                            origY: txt.y,
-                            origW: txt.width,
-                            origH: txt.height || currentH,
-                          };
-                        }}
-                      >
-                        <div
-                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-primary rounded-sm shadow-sm transition-transform hover:scale-105"
-                          style={{
-                            width: resizeHandleVisibleSize,
-                            height: resizeHandleVisibleSize,
-                            borderWidth: resizeHandleVisibleBorderWidth,
-                            borderStyle: 'solid',
-                          }}
-                        />
-                      </div>
-                    ))}
-                    <div className="absolute -top-6 left-0 text-[11px] font-medium text-primary/70 select-none whitespace-nowrap pointer-events-none">
-                      {txt.width} × {txt.height || 'auto'}
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-
-          {livePreviewStroke && livePreviewStroke.mode !== 'eraser' && livePreviewStroke.points.length > 1 && (() => {
-            const current = livePreviewStroke;
-            const pts = current.points;
-            const mode = current.mode;
-            const pad = brushDrawSize / 2 + (mode === 'arrow' ? Math.max(10, brushDrawSize * 3) : 6);
-            const xs = pts.map((p) => p.x);
-            const ys = pts.map((p) => p.y);
-            const rawMinX = Math.min(...xs);
-            const rawMinY = Math.min(...ys);
-            const rawMaxX = Math.max(...xs);
-            const rawMaxY = Math.max(...ys);
-            const svgW = rawMaxX - rawMinX + pad * 2;
-            const svgH = rawMaxY - rawMinY + pad * 2;
-            const brushPath = pts.reduce((acc, p, i) => {
-              const lx = p.x - rawMinX + pad;
-              const ly = p.y - rawMinY + pad;
-              if (i === 0) return `M ${lx} ${ly}`;
-              const prev = pts[i - 1];
-              const px = prev.x - rawMinX + pad;
-              const py = prev.y - rawMinY + pad;
-              const mx = (px + lx) / 2;
-              const my = (py + ly) / 2;
-              return `${acc} Q ${px} ${py} ${mx} ${my}`;
-            }, '');
-
-            const start = pts[0];
-            const end = pts[pts.length - 1] || start;
-            const sx = start.x - rawMinX + pad;
-            const sy = start.y - rawMinY + pad;
-            const ex = end.x - rawMinX + pad;
-            const ey = end.y - rawMinY + pad;
-
-            const previewNode = (() => {
-              if (mode === 'brush') {
-                return (
-                  <path
-                    d={brushPath}
-                    stroke={brushDrawColor}
-                    strokeWidth={brushDrawSize}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                    opacity={0.85}
-                  />
-                );
-              }
-
-              if (mode === 'line') {
-                return <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={brushDrawColor} strokeWidth={brushDrawSize} strokeLinecap="round" opacity={0.85} />;
-              }
-
-              if (mode === 'arrow') {
-                const angle = Math.atan2(ey - sy, ex - sx);
-                const head = Math.max(10, brushDrawSize * 2.6);
-                const a1 = angle - Math.PI / 7;
-                const a2 = angle + Math.PI / 7;
-                const hx1 = ex - head * Math.cos(a1);
-                const hy1 = ey - head * Math.sin(a1);
-                const hx2 = ex - head * Math.cos(a2);
-                const hy2 = ey - head * Math.sin(a2);
-                return (
-                  <g opacity={0.85}>
-                    <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={brushDrawColor} strokeWidth={brushDrawSize} strokeLinecap="round" />
-                    <path d={`M ${hx1} ${hy1} L ${ex} ${ey} L ${hx2} ${hy2}`} stroke={brushDrawColor} strokeWidth={brushDrawSize} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                  </g>
-                );
-              }
-
-              if (mode === 'rectangle') {
-                const rx = Math.min(sx, ex);
-                const ry = Math.min(sy, ey);
-                const rw = Math.max(1, Math.abs(ex - sx));
-                const rh = Math.max(1, Math.abs(ey - sy));
-                const previewFill = shapeFillEnabled ? hexToRgba(brushDrawColor, 0.32) : 'none';
-                return <rect x={rx} y={ry} width={rw} height={rh} stroke={brushDrawColor} strokeWidth={brushDrawSize} fill={previewFill} opacity={0.85} />;
-              }
-
-              const cx = (sx + ex) / 2;
-              const cy = (sy + ey) / 2;
-              const rx = Math.max(1, Math.abs(ex - sx) / 2);
-              const ry = Math.max(1, Math.abs(ey - sy) / 2);
-              const previewFill = shapeFillEnabled ? hexToRgba(brushDrawColor, 0.32) : 'none';
-              return <ellipse cx={cx} cy={cy} rx={rx} ry={ry} stroke={brushDrawColor} strokeWidth={brushDrawSize} fill={previewFill} opacity={0.85} />;
-            })();
-            return (
+            {/* Area selection preview rect */}
+            {activeSubPanel === 'edit-area' && areaPreview && (
               <div
                 className="absolute pointer-events-none"
-                style={{ left: rawMinX - pad, top: rawMinY - pad, width: svgW, height: svgH }}
-              >
-                <svg width={svgW} height={svgH} style={{ display: 'block' }}>
-                  {previewNode}
-                </svg>
-              </div>
-            );
-          })()}
-
-          {/* Mask canvas overlay — captures draw events when edit-area is active */}
-          {isImageSelected && activeSubPanel === 'edit-area' && selectedImage && (
-            <canvas
-              ref={maskCanvasRef}
-              width={selectedImage.width}
-              height={selectedImage.height}
-              className={cn("absolute pointer-events-auto z-20", isCanvasCustomCursorMode ? "cursor-none" : "cursor-crosshair")}
-              style={{ left: selectedImage.x, top: selectedImage.y, width: selectedImage.width, height: selectedImage.height }}
-              onMouseDown={handleMaskMouseDown}
-            />
-          )}
-
-          {/* Lasso in-progress preview SVG */}
-          {isImageSelected && activeSubPanel === 'edit-area' && selectedImage && lassoPreviewPoints.length > 1 && (
-            <svg
-              className="absolute pointer-events-none"
-              style={{ left: selectedImage.x, top: selectedImage.y, width: selectedImage.width, height: selectedImage.height, overflow: 'visible', zIndex: 21 }}
-            >
-              <polyline
-                points={lassoPreviewPoints.map((p) => `${p.x},${p.y}`).join(' ')}
-                fill="rgba(124,58,237,0.2)"
-                stroke="rgba(124,58,237,0.9)"
-                strokeWidth="2"
-                strokeDasharray="6 3"
-                strokeLinecap="round"
+                style={{
+                  left: selectedImage.x + Math.min(areaPreview.x1, areaPreview.x2),
+                  top: selectedImage.y + Math.min(areaPreview.y1, areaPreview.y2),
+                  width: Math.abs(areaPreview.x2 - areaPreview.x1),
+                  height: Math.abs(areaPreview.y2 - areaPreview.y1),
+                  border: '2px dashed rgba(124,58,237,0.9)',
+                  background: 'rgba(124,58,237,0.15)',
+                  zIndex: 21,
+                }}
               />
-            </svg>
-          )}
+            )}
 
-          {/* Area selection preview rect */}
-          {isImageSelected && activeSubPanel === 'edit-area' && selectedImage && areaPreview && (
-            <div
-              className="absolute pointer-events-none"
-              style={{
-                left: selectedImage.x + Math.min(areaPreview.x1, areaPreview.x2),
-                top: selectedImage.y + Math.min(areaPreview.y1, areaPreview.y2),
-                width: Math.abs(areaPreview.x2 - areaPreview.x1),
-                height: Math.abs(areaPreview.y2 - areaPreview.y1),
-                border: '2px dashed rgba(124,58,237,0.9)',
-                background: 'rgba(124,58,237,0.15)',
-                zIndex: 21,
-              }}
-            />
-          )}
-
-          {/* Outpaint / crop overlay */}
-          {isImageSelected && activeSubPanel === 'outpaint' && selectedImage && (() => {
-            const img = selectedImage;
-            const expandL = Math.max(0, outpaintBounds.left);
-            const expandT = Math.max(0, outpaintBounds.top);
-            const expandR = Math.max(0, outpaintBounds.right);
-            const expandB = Math.max(0, outpaintBounds.bottom);
-            const cropL = Math.max(0, -outpaintBounds.left);
-            const cropT = Math.max(0, -outpaintBounds.top);
-            const cropR = Math.max(0, -outpaintBounds.right);
-            const cropB = Math.max(0, -outpaintBounds.bottom);
-            const vw = img.width + expandL + expandR;
-            const vh = img.height + expandT + expandB;
-            const finalW = Math.max(32, vw - cropL - cropR);
-            const finalH = Math.max(32, vh - cropT - cropB);
-            const vx = img.x - expandL;
-            const vy = img.y - expandT;
-            const cbg = 'repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%)';
-            return (
-              <div key="outpaint-overlay" className="absolute" style={{ left: vx, top: vy, width: vw, height: vh, zIndex: 25, pointerEvents: 'none' }}>
-                {/* New dimension label */}
-                <div className="absolute -top-7 left-0 text-[11px] font-medium text-white/60 select-none whitespace-nowrap">
-                  {Math.round(finalW)} × {Math.round(finalH)}
-                </div>
-
-                {/* Outpaint zones — checkerboard */}
-                {expandL > 0 && <div className="absolute rounded-l-lg" style={{ left: 0, top: expandT, width: expandL, height: img.height, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
-                {expandR > 0 && <div className="absolute rounded-r-lg" style={{ right: 0, top: expandT, width: expandR, height: img.height, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
-                {expandT > 0 && <div className="absolute rounded-t-lg" style={{ top: 0, left: 0, right: 0, height: expandT, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
-                {expandB > 0 && <div className="absolute rounded-b-lg" style={{ bottom: 0, left: 0, right: 0, height: expandB, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
-
-                {/* Crop zones — dark overlay inside original image */}
-                {cropL > 0 && <div className="absolute bg-black/65" style={{ left: expandL, top: expandT, width: cropL, height: img.height }} />}
-                {cropR > 0 && <div className="absolute bg-black/65" style={{ right: expandR, top: expandT, width: cropR, height: img.height }} />}
-                {cropT > 0 && <div className="absolute bg-black/65" style={{ left: expandL + cropL, top: expandT, width: Math.max(0, img.width - cropL - cropR), height: cropT }} />}
-                {cropB > 0 && <div className="absolute bg-black/65" style={{ left: expandL + cropL, bottom: expandB, width: Math.max(0, img.width - cropL - cropR), height: cropB }} />}
-
-                {/* Border around virtual area */}
-                <div className="absolute inset-0 border-2 border-white/60 rounded-lg pointer-events-none" />
-
-                {/* Drag handles */}
-                {(['top', 'right', 'bottom', 'left'] as const).map((handle) => {
-                  const isHoriz = handle === 'top' || handle === 'bottom';
-                  const style: React.CSSProperties = handle === 'top'
-                    ? { top: 0, left: '50%', transform: 'translate(-50%, -50%)', cursor: 'ns-resize' }
-                    : handle === 'bottom'
-                    ? { bottom: 0, left: '50%', transform: 'translate(-50%, 50%)', cursor: 'ns-resize' }
-                    : handle === 'left'
-                    ? { left: 0, top: '50%', transform: 'translate(-50%, -50%)', cursor: 'ew-resize' }
-                    : { right: 0, top: '50%', transform: 'translate(50%, -50%)', cursor: 'ew-resize' };
-                  return (
-                    <div
-                      key={handle}
-                      className="absolute z-30"
-                      data-cursor-override
-                      style={{
-                        ...style,
-                        '--cursor-override': style.cursor,
-                        pointerEvents: 'auto',
-                        width: isHoriz ? outpaintHandleHitLong : outpaintHandleHitThick,
-                        height: isHoriz ? outpaintHandleHitThick : outpaintHandleHitLong,
-                      } as React.CSSProperties}
-                      onPointerEnter={beginHandleCursorHover}
-                      onPointerLeave={endHandleCursorHover}
-                      onMouseDown={(e) => handleOutpaintMouseDown(e, handle, img)}
-                    >
+            {/* Outpaint / crop overlay */}
+            {activeSubPanel === 'outpaint' && (() => {
+              const img = selectedImage;
+              const expandL = Math.max(0, outpaintBounds.left);
+              const expandT = Math.max(0, outpaintBounds.top);
+              const expandR = Math.max(0, outpaintBounds.right);
+              const expandB = Math.max(0, outpaintBounds.bottom);
+              const cropL = Math.max(0, -outpaintBounds.left);
+              const cropT = Math.max(0, -outpaintBounds.top);
+              const cropR = Math.max(0, -outpaintBounds.right);
+              const cropB = Math.max(0, -outpaintBounds.bottom);
+              const vw = img.width + expandL + expandR;
+              const vh = img.height + expandT + expandB;
+              const finalW = Math.max(32, vw - cropL - cropR);
+              const finalH = Math.max(32, vh - cropT - cropB);
+              const vx = img.x - expandL;
+              const vy = img.y - expandT;
+              const cbg = 'repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%)';
+              return (
+                <div key="outpaint-overlay" className="absolute" style={{ left: vx, top: vy, width: vw, height: vh, zIndex: 25, pointerEvents: 'none' }}>
+                  <div className="absolute -top-7 left-0 text-[11px] font-medium text-white/60 select-none whitespace-nowrap">
+                    {Math.round(finalW)} × {Math.round(finalH)}
+                  </div>
+                  {expandL > 0 && <div className="absolute rounded-l-lg" style={{ left: 0, top: expandT, width: expandL, height: img.height, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
+                  {expandR > 0 && <div className="absolute rounded-r-lg" style={{ right: 0, top: expandT, width: expandR, height: img.height, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
+                  {expandT > 0 && <div className="absolute rounded-t-lg" style={{ top: 0, left: 0, right: 0, height: expandT, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
+                  {expandB > 0 && <div className="absolute rounded-b-lg" style={{ bottom: 0, left: 0, right: 0, height: expandB, backgroundImage: cbg, backgroundSize: '16px 16px' }} />}
+                  {cropL > 0 && <div className="absolute bg-black/65" style={{ left: expandL, top: expandT, width: cropL, height: img.height }} />}
+                  {cropR > 0 && <div className="absolute bg-black/65" style={{ right: expandR, top: expandT, width: cropR, height: img.height }} />}
+                  {cropT > 0 && <div className="absolute bg-black/65" style={{ left: expandL + cropL, top: expandT, width: Math.max(0, img.width - cropL - cropR), height: cropT }} />}
+                  {cropB > 0 && <div className="absolute bg-black/65" style={{ left: expandL + cropL, bottom: expandB, width: Math.max(0, img.width - cropL - cropR), height: cropB }} />}
+                  <div className="absolute inset-0 border-2 border-white/60 rounded-lg pointer-events-none" />
+                  {(['top', 'right', 'bottom', 'left'] as const).map((handle) => {
+                    const isHoriz = handle === 'top' || handle === 'bottom';
+                    const style: React.CSSProperties = handle === 'top'
+                      ? { top: 0, left: '50%', transform: 'translate(-50%, -50%)', cursor: 'ns-resize' }
+                      : handle === 'bottom'
+                      ? { bottom: 0, left: '50%', transform: 'translate(-50%, 50%)', cursor: 'ns-resize' }
+                      : handle === 'left'
+                      ? { left: 0, top: '50%', transform: 'translate(-50%, -50%)', cursor: 'ew-resize' }
+                      : { right: 0, top: '50%', transform: 'translate(50%, -50%)', cursor: 'ew-resize' };
+                    return (
                       <div
-                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#999] hover:bg-white active:bg-white transition-colors shadow-md rounded-full"
-                        style={
-                          isHoriz
-                            ? { width: outpaintHandleVisibleLong, height: outpaintHandleVisibleThick }
-                            : { width: outpaintHandleVisibleThick, height: outpaintHandleVisibleLong }
-                        }
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
+                        key={handle}
+                        className="absolute z-30"
+                        data-cursor-override
+                        style={{ ...style, '--cursor-override': style.cursor, pointerEvents: 'auto', width: isHoriz ? outpaintHandleHitLong : outpaintHandleHitThick, height: isHoriz ? outpaintHandleHitThick : outpaintHandleHitLong } as React.CSSProperties}
+                        onPointerEnter={beginHandleCursorHover}
+                        onPointerLeave={endHandleCursorHover}
+                        onMouseDown={(e) => handleOutpaintMouseDown(e, handle, img)}
+                      >
+                        <div
+                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#999] hover:bg-white active:bg-white transition-colors shadow-md rounded-full"
+                          style={isHoriz ? { width: outpaintHandleVisibleLong, height: outpaintHandleVisibleThick } : { width: outpaintHandleVisibleThick, height: outpaintHandleVisibleLong }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Floating edit-area action bar — positioned in screen space below selected image */}
         {isImageSelected && activeSubPanel === 'edit-area' && selectedImage && (
