@@ -23,11 +23,30 @@ function createPrismaClient() {
   return new PrismaClient({ accelerateUrl: process.env.DATABASE_URL! });
 }
 
+function hasRuntimeField(client: PrismaClient, modelName: string, fieldName: string): boolean {
+  const runtimeModels = (client as unknown as {
+    _runtimeDataModel?: {
+      models?: Record<string, { fields?: Array<{ name?: string }> }>;
+    };
+  })._runtimeDataModel?.models;
+
+  const fields = runtimeModels?.[modelName]?.fields;
+  if (!Array.isArray(fields)) return false;
+  return fields.some((field) => field?.name === fieldName);
+}
+
 function isCompatibleClient(client?: PrismaClient): client is PrismaClient {
   // During Next.js dev HMR, a Prisma singleton created before schema updates
-  // may stay in memory and miss newer delegates like projectShare.
+  // may stay in memory and miss newer delegates/fields after prisma generate.
   if (!client) return false;
-  return typeof (client as unknown as { projectShare?: unknown }).projectShare !== 'undefined';
+
+  const delegatesOk =
+    typeof (client as unknown as { projectShare?: unknown }).projectShare !== 'undefined' &&
+    typeof (client as unknown as { landingConfig?: unknown }).landingConfig !== 'undefined';
+
+  const userRoleFieldOk = hasRuntimeField(client, 'User', 'role');
+
+  return delegatesOk && userRoleFieldOk;
 }
 
 const existingClient = globalForPrisma.prisma;
