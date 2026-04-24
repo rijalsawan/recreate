@@ -551,7 +551,7 @@ export async function POST(request: NextRequest) {
       } catch { /* keep original URL if Cloudinary upload fails */ }
 
       if (!shouldSaveToDatabase) {
-        return { id: null as string | null, imageUrl, savedToDb: false };
+        return { id: null as string | null, imageUrl, savedToDb: false, format: model.includes('vector') ? 'VECTOR' : 'RASTER' };
       }
 
       try {
@@ -573,10 +573,10 @@ export async function POST(request: NextRequest) {
             select: { id: true, imageUrl: true },
           })
         );
-        return { id: record.id, imageUrl: record.imageUrl, savedToDb: true };
+        return { id: record.id, imageUrl: record.imageUrl, savedToDb: true, format: model.includes('vector') ? 'VECTOR' : 'RASTER' };
       } catch {
         console.error('[generate] Failed to save generated image to DB after retries');
-        return { id: null as string | null, imageUrl, savedToDb: false };
+        return { id: null as string | null, imageUrl, savedToDb: false, format: model.includes('vector') ? 'VECTOR' : 'RASTER' };
       }
     })
   );

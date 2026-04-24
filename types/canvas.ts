@@ -22,6 +22,7 @@ export interface CanvasImage {
   style: string;
   ratio: string;
   isFrame?: boolean;
+  isSvg?: boolean;
   adjustments?: CanvasAdjustments;
 }
 

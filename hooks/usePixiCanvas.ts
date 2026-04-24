@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { Application, Container, Graphics, Texture } from 'pixi.js';
+import { Application, Container, Graphics } from 'pixi.js';
 import { getPixiApp, destroyPixiApp } from '@/lib/pixi';
-import { loadTexture, getLodUrl, clearTextureCache } from '@/lib/textureCache';
+import { clearTextureCache } from '@/lib/textureCache';
 import { PixiImageNode } from '@/components/canvas/pixi/PixiImageNode';
 import { PixiTextNode } from '@/components/canvas/pixi/PixiTextNode';
 import { PixiStrokeNode } from '@/components/canvas/pixi/PixiStrokeNode';
@@ -27,9 +27,6 @@ const LOD_LEVELS = [0.15, 0.3, 0.6, 1.2, 2.5];
 const FRICTION = 0.88;
 const MIN_VELOCITY = 0.1;
 
-// ── Snap threshold ─────────────────────────────────────────────────────────
-const SNAP_THRESHOLD = 6;
-
 // ── Reduced motion (read once — stable for the page lifetime) ──────────────
 const PREFERS_REDUCED_MOTION =
   typeof window !== 'undefined' &&
@@ -47,6 +44,8 @@ interface DragImageState {
   origY: number;
   startClientX: number;
   startClientY: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
   liveX: number;
   liveY: number;
 }
@@ -101,6 +100,7 @@ export interface PixiCanvasCallbacks {
   onSelectText: (id: string | null) => void;
   onSelectStroke: (id: string | null) => void;
   onDeselect: () => void;
+  onHandleHoverChange?: (hovering: boolean, cursor?: string) => void;
   onImageMoved: (id: string, x: number, y: number) => void;
   onImageResized: (id: string, x: number, y: number, w: number, h: number) => void;
   onTextMoved: (id: string, x: number, y: number) => void;
@@ -271,9 +271,10 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     const el = propsRef.current.canvasEl;
     if (!el) return { x: 0, y: 0 };
     const rect = el.getBoundingClientRect();
+    const safeZoom = liveZoom.current > 0 ? liveZoom.current : 1;
     return {
-      x: (clientX - rect.left - livePanX.current) / liveZoom.current,
-      y: (clientY - rect.top - livePanY.current) / liveZoom.current,
+      x: (clientX - rect.left - livePanX.current) / safeZoom,
+      y: (clientY - rect.top - livePanY.current) / safeZoom,
     };
   }, []);
 
@@ -300,7 +301,7 @@ export function usePixiCanvas(props: PixiCanvasProps) {
         if (!node) {
           node = new PixiImageNode(img.id, img, (handleId, e) => {
             handleResizeDown(handleId, e, 'image', img.id);
-          });
+          }, (hovering, cursor) => propsRef.current.onHandleHoverChange?.(hovering, cursor));
           node.container.on('pointerdown', (ev) =>
             handleImagePointerDown(ev.nativeEvent as PointerEvent, img.id),
           );
@@ -308,7 +309,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
           existing.set(img.id, node);
           node.scheduleTextureLoad(img.url, zoom);
         } else {
-          node.sync(img, zoom);
+          // Skip position/size reset if this image is actively being dragged or resized —
+          // the live node position is ahead of React state and must not be overwritten.
+          const isBeingDragged = dragImageRef.current?.id === img.id;
+          const isBeingResized = resizeRef.current?.id === img.id && resizeRef.current?.kind === 'image';
+          if (isBeingDragged || isBeingResized) {
+            node.data = img; // keep data current (e.g. adjustments) without calling applyTransform
+          } else {
+            node.sync(img, zoom);
+          }
         }
         node.setSelected(img.id === selectedId, zoom);
       });
@@ -337,7 +346,7 @@ export function usePixiCanvas(props: PixiCanvasProps) {
         if (!node) {
           node = new PixiTextNode(txt.id, txt, (handleId, e) => {
             handleResizeDown(handleId, e, 'text', txt.id);
-          });
+          }, (hovering, cursor) => propsRef.current.onHandleHoverChange?.(hovering, cursor));
           node.container.on('pointerdown', (ev) =>
             handleTextPointerDown(ev.nativeEvent as PointerEvent, txt.id),
           );
@@ -347,7 +356,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
           board.addChild(node.container);
           existing.set(txt.id, node);
         } else {
-          node.sync(txt, zoom);
+          const isBeingDragged = dragTextRef.current?.id === txt.id;
+          const isBeingResized = resizeRef.current?.id === txt.id && resizeRef.current?.kind === 'text';
+          if (isBeingDragged || isBeingResized) {
+            // Keep style/content updates, but don't reset transform while gesture is live.
+            // The node's visual position/size is driven imperatively during drag/resize.
+            node.data = txt;
+          } else {
+            node.sync(txt, zoom);
+          }
         }
         node.setSelected(txt.id === selectedId, zoom);
       });
@@ -394,9 +411,36 @@ export function usePixiCanvas(props: PixiCanvasProps) {
 
   // ── Interaction: Image ───────────────────────────────────────────────────
 
+  function capturePointer(pointerId: number) {
+    const el = propsRef.current.canvasEl;
+    if (!el) return;
+    try {
+      if (!el.hasPointerCapture(pointerId)) el.setPointerCapture(pointerId);
+    } catch {
+      // Ignore capture errors (e.g. invalid pointer id/lifecycle race)
+    }
+  }
+
+  function releasePointer(pointerId: number) {
+    const el = propsRef.current.canvasEl;
+    if (!el) return;
+    try {
+      if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+    } catch {
+      // Ignore release errors
+    }
+  }
+
   function handleImagePointerDown(e: PointerEvent, imgId: string) {
-    e.stopPropagation();
-    if (e.button !== 0) return;
+    if (e.button !== 0) return; // Let non-left-clicks reach onPointerDown (e.g. middle-click pan)
+    capturePointer(e.pointerId);
+    e.stopImmediatePropagation(); // Prevent onPointerDown from also firing on the canvas element
+    // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
+    if (momentumRafRef.current !== null) {
+      cancelAnimationFrame(momentumRafRef.current);
+      momentumRafRef.current = null;
+    }
+    panStateRef.current = null;
     const p = propsRef.current;
 
     if (p.activeTool === 'hand' || p.spaceHeld) {
@@ -409,16 +453,29 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       return;
     }
 
+    if (p.activeTool === 'text') {
+      const { x, y } = clientToWorld(e.clientX, e.clientY);
+      propsRef.current.canvasEl?.dispatchEvent(
+        new CustomEvent('pixi:addtext', {
+          detail: { x, y, clientX: e.clientX, clientY: e.clientY, historyImageId: imgId },
+        }),
+      );
+      return;
+    }
+
     if (p.activeTool === 'select') {
       const img = p.canvasImages.find((i) => i.id === imgId);
       if (!img) return;
       p.onSelectImage(imgId);
+      const pointerWorld = clientToWorld(e.clientX, e.clientY);
       dragImageRef.current = {
         id: imgId,
         origX: img.x,
         origY: img.y,
         startClientX: e.clientX,
         startClientY: e.clientY,
+        pointerOffsetX: pointerWorld.x - img.x,
+        pointerOffsetY: pointerWorld.y - img.y,
         liveX: img.x,
         liveY: img.y,
       };
@@ -426,15 +483,30 @@ export function usePixiCanvas(props: PixiCanvasProps) {
   }
 
   function handleTextPointerDown(e: PointerEvent, txtId: string) {
-    e.stopPropagation();
     if (e.button !== 0) return;
+    capturePointer(e.pointerId);
+    e.stopImmediatePropagation();
+    // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
+    if (momentumRafRef.current !== null) {
+      cancelAnimationFrame(momentumRafRef.current);
+      momentumRafRef.current = null;
+    }
+    panStateRef.current = null;
     const p = propsRef.current;
 
     if (p.activeTool === 'hand' || p.spaceHeld) { startPan(e); return; }
 
-    if (p.activeTool === 'select' || p.activeTool === 'text') {
-      const txt = p.canvasTexts.find((t) => t.id === txtId);
-      if (!txt) return;
+    const txt = p.canvasTexts.find((t) => t.id === txtId);
+    if (!txt) return;
+
+    // Text tool should enter inline editing on click (no drag gesture required).
+    if (p.activeTool === 'text') {
+      p.onSelectText(txtId);
+      p.onStartEditText(txtId);
+      return;
+    }
+
+    if (p.activeTool === 'select') {
       p.onSelectText(txtId);
       dragTextRef.current = {
         id: txtId,
@@ -447,8 +519,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
   }
 
   function handleStrokePointerDown(e: PointerEvent, strokeId: string) {
-    e.stopPropagation();
     if (e.button !== 0) return;
+    capturePointer(e.pointerId);
+    e.stopImmediatePropagation();
+    // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
+    if (momentumRafRef.current !== null) {
+      cancelAnimationFrame(momentumRafRef.current);
+      momentumRafRef.current = null;
+    }
+    panStateRef.current = null;
     const p = propsRef.current;
     if (p.activeTool === 'brush' || p.activeTool === 'shapes') return;
     if (p.activeTool === 'hand' || p.spaceHeld) { startPan(e); return; }
@@ -466,7 +545,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
   }
 
   function handleResizeDown(handleId: HandleId, e: PointerEvent, kind: 'image' | 'text', nodeId: string) {
-    e.stopPropagation();
+    if (e.button !== 0) return;
+    capturePointer(e.pointerId);
+    e.stopImmediatePropagation(); // Prevent onPointerDown deselect from destroying handles on click
+    // Cancel momentum so the board doesn't move during resize.
+    if (momentumRafRef.current !== null) {
+      cancelAnimationFrame(momentumRafRef.current);
+      momentumRafRef.current = null;
+    }
+    panStateRef.current = null;
     const p = propsRef.current;
     if (kind === 'image') {
       const img = p.canvasImages.find((i) => i.id === nodeId);
@@ -620,6 +707,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
   function onPointerDown(e: PointerEvent) {
     const p = propsRef.current;
 
+    // Mouse pointers cannot be multi-touch; clear stale pointer bookkeeping to
+    // avoid accidental pinch state from prior interactions.
+    if (e.pointerType === 'mouse') {
+      activePointersRef.current.clear();
+      pinchPrevDistRef.current = null;
+    }
+
+    capturePointer(e.pointerId);
+
     // Track pointer for pinch detection
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -729,9 +825,8 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       } else {
         const node = textNodesRef.current.get(resize.id);
         if (node) {
-          node.data = { ...node.data, x: nx, y: ny, width: nw, height: nh };
-          node.applyTransform();
-          node.updateHandles(liveZoom.current);
+          // Keep text layout in sync with frame size during drag (word-wrap width changes).
+          node.sync({ ...node.data, x: nx, y: ny, width: nw, height: nh }, liveZoom.current);
         }
       }
       return;
@@ -757,10 +852,11 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     // Image drag
     const drag = dragImageRef.current;
     if (drag) {
-      const dx = (e.clientX - drag.startClientX) / liveZoom.current;
-      const dy = (e.clientY - drag.startClientY) / liveZoom.current;
-      const rawX = drag.origX + dx;
-      const rawY = drag.origY + dy;
+      // Anchor drag to the pointer's world-space offset from image origin.
+      // This remains stable even if zoom/pan changes mid-drag.
+      const pointerWorld = clientToWorld(e.clientX, e.clientY);
+      const rawX = pointerWorld.x - drag.pointerOffsetX;
+      const rawY = pointerWorld.y - drag.pointerOffsetY;
       const { x, y, lines } = propsRef.current.computeSnap(drag.id, rawX, rawY);
       drag.liveX = x;
       drag.liveY = y;
@@ -824,6 +920,7 @@ export function usePixiCanvas(props: PixiCanvasProps) {
 
     // Clean up pointer tracking; exit pinch when fewer than 2 active
     activePointersRef.current.delete(e.pointerId);
+    releasePointer(e.pointerId);
     const wasPinching = pinchPrevDistRef.current !== null;
     if (activePointersRef.current.size < 2) {
       pinchPrevDistRef.current = null;
@@ -846,6 +943,7 @@ export function usePixiCanvas(props: PixiCanvasProps) {
           p.onTextResized(resize.id, d.x, d.y, w, h);
         }
       }
+      p.onHandleHoverChange?.(false);
       resizeRef.current = null;
       return;
     }
@@ -999,12 +1097,43 @@ export function usePixiCanvas(props: PixiCanvasProps) {
 
     const rect = el.getBoundingClientRect();
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
+    let onWindowResize: (() => void) | null = null;
+
+    const resizeRendererToCanvas = () => {
+      const currentApp = appRef.current;
+      if (!currentApp) return;
+      const bounds = el.getBoundingClientRect();
+      const nextW = Math.max(1, Math.round(bounds.width));
+      const nextH = Math.max(1, Math.round(bounds.height));
+      const currentW = Math.max(1, Math.round(currentApp.renderer.width / currentApp.renderer.resolution));
+      const currentH = Math.max(1, Math.round(currentApp.renderer.height / currentApp.renderer.resolution));
+      if (currentW === nextW && currentH === nextH) return;
+
+      currentApp.renderer.resize(nextW, nextH);
+      currentApp.stage.hitArea = currentApp.screen;
+
+      const culler = cullerRef.current;
+      if (culler) {
+        culler.cull({
+          panX: livePanX.current,
+          panY: livePanY.current,
+          zoom: liveZoom.current,
+          canvasWidth: nextW,
+          canvasHeight: nextH,
+        });
+      }
+    };
 
     destroyPixiApp();
 
     getPixiApp(el, rect.width || 800, rect.height || 600).then((app) => {
       if (cancelled) { destroyPixiApp(); return; }
       appRef.current = app;
+
+      // ── Stage setup: enable interactive hit-testing and cursor management ──
+      app.stage.eventMode = 'static';
+      app.stage.hitArea = app.screen;
 
       // ── Board container (world space)
       const board = new Container();
@@ -1026,14 +1155,25 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       board.addChild(previewG);
       previewGRef.current = previewG;
 
+      // Sync live viewport refs from current props — the API data may have arrived
+      // and triggered setZoom/setPanX/setPanY while Pixi was still initialising.
+      // The viewport useEffect skips when boardRef is null, so liveZoom/Pan would
+      // be stuck at their initial (0.5 / 0,0) values. Read propsRef.current so we
+      // always apply the latest viewport, not the stale closure values.
+      liveZoom.current = propsRef.current.zoom;
+      livePanX.current = propsRef.current.panX;
+      livePanY.current = propsRef.current.panY;
+
       // Apply initial viewport
       board.scale.set(liveZoom.current);
       board.position.set(livePanX.current, livePanY.current);
 
-      // Initial sync
-      syncImages(props.canvasImages, props.selectedImageId, liveZoom.current);
-      syncTexts(props.canvasTexts, props.selectedTextId, liveZoom.current);
-      syncStrokes(props.brushStrokes, props.selectedStrokeId, liveZoom.current);
+      // Initial sync — use propsRef.current for the same reason: canvasImages / texts
+      // may have loaded from the API while Pixi was initialising and the syncImages
+      // useEffect skipped because boardRef was null at that point.
+      syncImages(propsRef.current.canvasImages, propsRef.current.selectedImageId, liveZoom.current);
+      syncTexts(propsRef.current.canvasTexts, propsRef.current.selectedTextId, liveZoom.current);
+      syncStrokes(propsRef.current.brushStrokes, propsRef.current.selectedStrokeId, liveZoom.current);
 
       // ── Culler (created after nodes are populated)
       cullerRef.current = createCuller(imageNodesRef.current, textNodesRef.current, strokeNodesRef.current);
@@ -1041,13 +1181,18 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       // Run culling every PixiJS frame so it is ALWAYS in sync with the rendered
       // board position. This eliminates the timing gap that caused images to
       // vanish during fast panning with the previous setTimeout approach.
+      // Early-exit when viewport hasn't changed to skip AABB checks on idle frames.
+      let lastCullPanX = NaN, lastCullPanY = NaN, lastCullZoom = NaN;
       app.ticker.add(() => {
         const culler = cullerRef.current;
         if (!culler) return;
+        const px = livePanX.current, py = livePanY.current, z = liveZoom.current;
+        if (px === lastCullPanX && py === lastCullPanY && z === lastCullZoom) return;
+        lastCullPanX = px; lastCullPanY = py; lastCullZoom = z;
         culler.cull({
-          panX:        livePanX.current,
-          panY:        livePanY.current,
-          zoom:        liveZoom.current,
+          panX:        px,
+          panY:        py,
+          zoom:        z,
           canvasWidth: app.renderer.width  / app.renderer.resolution,
           canvasHeight: app.renderer.height / app.renderer.resolution,
         });
@@ -1058,18 +1203,37 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       el.addEventListener('pointermove', onPointerMove, { passive: true });
       el.addEventListener('pointerup', onPointerUp);
       el.addEventListener('pointercancel', onPointerUp);
+      el.addEventListener('lostpointercapture', onPointerUp);
       el.addEventListener('wheel', onWheel, { passive: false });
+
+      if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => resizeRendererToCanvas());
+        resizeObserver.observe(el);
+      }
+      onWindowResize = () => resizeRendererToCanvas();
+      window.addEventListener('resize', onWindowResize);
+      resizeRendererToCanvas();
     });
 
     return () => {
       cancelled = true;
       const el2 = props.canvasEl;
       if (el2) {
+        for (const pointerId of activePointersRef.current.keys()) {
+          releasePointer(pointerId);
+        }
         el2.removeEventListener('pointerdown', onPointerDown);
         el2.removeEventListener('pointermove', onPointerMove);
         el2.removeEventListener('pointerup', onPointerUp);
         el2.removeEventListener('pointercancel', onPointerUp);
+        el2.removeEventListener('lostpointercapture', onPointerUp);
         el2.removeEventListener('wheel', onWheel);
+      }
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      if (onWindowResize) {
+        window.removeEventListener('resize', onWindowResize);
+        onWindowResize = null;
       }
       if (viewportRafRef.current !== null) cancelAnimationFrame(viewportRafRef.current);
       if (momentumRafRef.current !== null) cancelAnimationFrame(momentumRafRef.current);
@@ -1100,6 +1264,15 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     if (!boardRef.current) return;
     syncTexts(props.canvasTexts, props.selectedTextId, liveZoom.current);
   }, [props.canvasTexts, props.selectedTextId, syncTexts]);
+
+  // ── Hide PixiJS text node while textarea overlay is active ───────────────
+  // Prevents the "double text" artifact where both the PixiJS Text and the
+  // React textarea overlay are simultaneously visible during inline editing.
+  useEffect(() => {
+    for (const [id, node] of textNodesRef.current) {
+      node.setEditing(id === props.editingTextId);
+    }
+  }, [props.editingTextId]);
 
   useEffect(() => {
     if (!boardRef.current) return;

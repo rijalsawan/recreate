@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 const AI_STYLE_KEY_PREFIX = 'ai::';
+const MAX_SAFE_COVER_BYTES = 4_500_000;
+
+type StyleCoverQueryRow = {
+  imageUrl: string | null;
+};
 
 function toDbKey(styleKey: string): string {
   return `${AI_STYLE_KEY_PREFIX}${styleKey}`;
@@ -16,14 +21,27 @@ export async function GET(
   const { key } = await params;
   const styleKey = decodeURIComponent(key);
 
-  const cover = await prisma.styleCover.findUnique({
-    where: { styleKey: toDbKey(styleKey) },
-    select: { imageUrl: true },
-  });
+  try {
+    const rows = await prisma.$queryRaw<StyleCoverQueryRow[]>`
+      SELECT
+        CASE
+          WHEN OCTET_LENGTH("imageUrl") > ${MAX_SAFE_COVER_BYTES} THEN NULL
+          ELSE "imageUrl"
+        END AS "imageUrl"
+      FROM "StyleCover"
+      WHERE "styleKey" = ${toDbKey(styleKey)}
+      LIMIT 1
+    `;
 
-  if (!cover) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const cover = rows[0];
+
+    if (!cover || !cover.imageUrl) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ imageUrl: cover.imageUrl });
+  } catch (error) {
+    console.error('[ai-style-covers:key] Failed to fetch cover', { styleKey, error });
+    return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
   }
-
-  return NextResponse.json({ imageUrl: cover.imageUrl });
 }

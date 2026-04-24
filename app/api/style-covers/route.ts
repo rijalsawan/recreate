@@ -3,6 +3,8 @@ import { getAuthSession, requireAdminAccess } from '@/lib/api-helpers';
 import { prisma } from '@/lib/prisma';
 import sharp from 'sharp';
 
+const MAX_SAFE_COVER_BYTES = 4_500_000;
+
 // In-memory cache of styleKeys that have a saved cover.
 // Clients fetch individual images via /api/style-covers/[key] to avoid
 // bulk-loading all imageUrls in one response (which would hit the 5 MB
@@ -41,9 +43,11 @@ export async function GET() {
   }
 
   try {
-    const covers = await prisma.styleCover.findMany({
-      select: { styleKey: true },
-    });
+    const covers = await prisma.$queryRaw<Array<{ styleKey: string }>>`
+      SELECT "styleKey"
+      FROM "StyleCover"
+      WHERE OCTET_LENGTH("imageUrl") <= ${MAX_SAFE_COVER_BYTES}
+    `;
     cachedKeys = covers.map((c) => c.styleKey);
     return NextResponse.json({ cached: cachedKeys });
   } catch {

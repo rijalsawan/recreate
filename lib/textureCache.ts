@@ -3,11 +3,28 @@ import { Assets, Texture } from 'pixi.js';
 const cache = new Map<string, Texture>();
 const loading = new Map<string, Promise<Texture>>();
 
+function safeUnload(url: string) {
+  const assetCache = (Assets as unknown as { cache?: { has: (key: string) => boolean } }).cache;
+  if (assetCache?.has && !assetCache.has(url)) return;
+  Assets.unload(url).catch(() => { /* already unloaded or never loaded */ });
+}
+
 export async function loadTexture(url: string): Promise<Texture> {
   if (cache.has(url)) return cache.get(url)!;
   if (loading.has(url)) return loading.get(url)!;
 
-  const promise = Assets.load<Texture>(url).then((texture) => {
+  // SVG files must use PixiJS's built-in SVG loader (auto-detected by extension).
+  // Forcing the raster 'loadTextures' parser on SVG URLs causes silent failure because
+  // the ImageBitmap/raster parser cannot reliably decode SVG content.
+  // For all other URLs (including extension-less recraft.ai URLs) we force 'loadTextures'
+  // so PixiJS doesn't try an incorrect parser.
+  const isSvgUrl = url.split('?')[0].toLowerCase().endsWith('.svg');
+
+  const promise = (
+    isSvgUrl
+      ? Assets.load<Texture>({ alias: url, src: url })                                    // auto-detect → loadSVG
+      : Assets.load<Texture>({ alias: url, src: url, parser: 'loadTextures' })            // force raster parser
+  ).then((texture) => {
     loading.delete(url);
     // Assets.load can resolve to null on CORS errors or unsupported formats
     if (!texture || !(texture instanceof Texture)) {
@@ -29,6 +46,12 @@ export function getLodUrl(cloudinaryUrl: string, zoom: number): string {
     return cloudinaryUrl;
   }
 
+  // SVG files must not be rasterised — serve them untransformed so they remain vector.
+  const path = cloudinaryUrl.split('?')[0];
+  if (path.endsWith('.svg')) {
+    return cloudinaryUrl;
+  }
+
   let w: number;
   if (zoom < 0.15) w = 128;
   else if (zoom < 0.3) w = 256;
@@ -41,19 +64,16 @@ export function getLodUrl(cloudinaryUrl: string, zoom: number): string {
 }
 
 export function evictTexture(url: string) {
-  const texture = cache.get(url);
   cache.delete(url);
-  if (texture && texture !== Texture.EMPTY && !texture.destroyed) {
-    texture.destroy(true);
-  }
+  loading.delete(url);
+  safeUnload(url);
 }
 
 export function clearTextureCache() {
-  cache.forEach((t) => {
-    if (t && t !== Texture.EMPTY && !t.destroyed) {
-      t.destroy(true);
-    }
-  });
+  const urls = Array.from(cache.keys());
   cache.clear();
   loading.clear();
+  for (const url of urls) {
+    safeUnload(url);
+  }
 }

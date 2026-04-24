@@ -17,6 +17,7 @@ export async function getPixiApp(
     canvas,
     width,
     height,
+    resizeTo: canvas.parentElement ?? undefined,
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
     antialias: true,
@@ -29,6 +30,14 @@ export async function getPixiApp(
 }
 
 export function destroyPixiApp() {
-  app?.destroy(false, { children: true, texture: true });
+  // Do NOT pass { children: true } here.
+  // children:true recursively calls sprite.destroy() which calls baseTexture.destroy()
+  // while textures are still registered in the PixiJS Assets managed-texture set.
+  // That triggers the "destroyed instead of unloaded" warning AND poisons the Assets
+  // cache with destroyed texture objects, causing reload blank-canvas bugs.
+  // Instead, skip child destruction — imageNodesRef.clear() drops all JS refs so GC
+  // collects the display tree, and Assets.unload() (called from clearTextureCache)
+  // properly destroys the textures through the correct path.
+  app?.destroy(false, { children: false });
   app = null;
 }

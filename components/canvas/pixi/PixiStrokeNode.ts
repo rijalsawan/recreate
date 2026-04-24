@@ -1,4 +1,4 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Rectangle } from 'pixi.js';
 import type { BrushStroke } from '@/types/canvas';
 
 function hexToNumber(hex: string): number {
@@ -36,6 +36,7 @@ export class PixiStrokeNode {
     this.container.position.set(s.offsetX, s.offsetY);
     this.container.alpha = s.opacity / 100;
     this._draw();
+    this._updateHitArea();
   }
 
   private _draw() {
@@ -109,6 +110,26 @@ export class PixiStrokeNode {
       }
       g.stroke({ color: colorNum, width: s.size });
     }
+  }
+
+  private _updateHitArea() {
+    const pts = this.data.points;
+    if (pts.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    // Pad by at least 10px so thin lines and small shapes are easy to click
+    const hitPad = Math.max(this.data.size / 2, 10);
+    this.container.hitArea = new Rectangle(
+      minX - hitPad,
+      minY - hitPad,
+      (maxX - minX) + hitPad * 2,
+      (maxY - minY) + hitPad * 2,
+    );
   }
 
   setSelected(selected: boolean, w: number, h: number, zoom: number) {

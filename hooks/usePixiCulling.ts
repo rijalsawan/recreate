@@ -72,7 +72,7 @@ export function createCuller(
       node.container.eventMode = visible ? 'static' : 'none';
 
       if (!visible && wasVisible)  onImageHidden(id, node);
-      if (visible  && !wasVisible) onImageVisible(id, node, ctx.zoom);
+      if (visible && (!wasVisible || !node.hasTexture())) onImageVisible(id, node, ctx.zoom);
     }
 
     for (const node of textNodes.values()) {

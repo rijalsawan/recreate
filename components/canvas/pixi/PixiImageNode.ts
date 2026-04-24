@@ -32,11 +32,14 @@ export class PixiImageNode {
   private frameGraphics: Graphics | null = null;
   private selectionHandles: SelectionHandles | null = null;
   private colorFilter: ColorMatrixFilter | null = null;
+  private currentTextureUrl: string | null = null;
+  private textureRequestVersion = 0;
 
   constructor(
     public readonly id: string,
     public data: CanvasImage,
     private onHandlePointerDown: (id: HandleId, e: PointerEvent) => void,
+    private onHandleHoverChange?: (hovering: boolean, cursor?: string) => void,
   ) {
     this.container = new Container();
     this.container.label = `image-${id}`;
@@ -145,9 +148,13 @@ export class PixiImageNode {
   scheduleTextureLoad(url: string, zoom: number) {
     if (!url) return;
     const lodUrl = getLodUrl(url, zoom);
+    const requestVersion = ++this.textureRequestVersion;
     loadTexture(lodUrl)
       .then((tex) => {
         if (this.sprite.destroyed || tex === Texture.EMPTY) return;
+        // Ignore stale loads from earlier URL/LOD requests.
+        if (requestVersion !== this.textureRequestVersion) return;
+        this.currentTextureUrl = lodUrl;
         this.sprite.texture = tex;
         this._sizeSprite(this.data.width, this.data.height);
       })
@@ -159,12 +166,21 @@ export class PixiImageNode {
   }
 
   hasTexture(): boolean {
-    return !this.sprite.destroyed && this.sprite.texture !== Texture.EMPTY;
+    return (
+      !this.sprite.destroyed &&
+      this.sprite.texture !== Texture.EMPTY &&
+      !this.sprite.texture.destroyed
+    );
   }
 
   evictTexture() {
-    const url = getLodUrl(this.data.url, 1);
-    import('@/lib/textureCache').then(({ evictTexture }) => evictTexture(url));
+    const url = this.currentTextureUrl;
+    this.currentTextureUrl = null;
+    // Invalidate pending async load responses while hidden.
+    this.textureRequestVersion++;
+    if (url) {
+      import('@/lib/textureCache').then(({ evictTexture }) => evictTexture(url));
+    }
     if (!this.sprite.destroyed) this.sprite.texture = Texture.EMPTY;
   }
 
@@ -172,7 +188,7 @@ export class PixiImageNode {
 
   setSelected(selected: boolean, zoom: number) {
     if (selected && !this.selectionHandles) {
-      const handles = new SelectionHandles(this.onHandlePointerDown);
+      const handles = new SelectionHandles(this.onHandlePointerDown, this.onHandleHoverChange);
       this.selectionHandles = handles;
       this.container.addChild(handles.container);
       handles.update(this.data.width, this.data.height, zoom);
@@ -191,8 +207,15 @@ export class PixiImageNode {
   sync(newData: CanvasImage, zoom: number) {
     const urlChanged = newData.url !== this.data.url;
     const sizeChanged = newData.width !== this.data.width || newData.height !== this.data.height;
+    const a = this.data.adjustments;
+    const na = newData.adjustments;
     const adjChanged =
-      JSON.stringify(newData.adjustments) !== JSON.stringify(this.data.adjustments);
+      a?.hue !== na?.hue ||
+      a?.saturation !== na?.saturation ||
+      a?.brightness !== na?.brightness ||
+      a?.contrast !== na?.contrast ||
+      a?.opacity !== na?.opacity ||
+      (a == null) !== (na == null);
 
     this.data = newData;
     this.applyTransform();
@@ -205,6 +228,8 @@ export class PixiImageNode {
   }
 
   destroy() {
+    this.currentTextureUrl = null;
+    this.textureRequestVersion++;
     this.selectionHandles?.destroy();
     this.colorFilter = null;
     this.frameGraphics = null;

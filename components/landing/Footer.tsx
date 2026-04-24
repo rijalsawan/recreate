@@ -151,7 +151,7 @@ export default function Footer() {
         <p
           className="font-display font-black uppercase text-white text-center"
           style={{
-            fontSize: 'clamp(7rem, 22vw, 17.5rem)',
+            fontSize: 'clamp(7rem, 22vw, 10rem)',
             lineHeight: 0.82,
             letterSpacing: '-0.02em',
           }}

@@ -98,6 +98,7 @@ export const PixiCanvasBoard = memo(function PixiCanvasBoard(props: PixiCanvasBo
     const sy = txt.y * props.zoom + props.panY + rect.top;
     const sw = txt.width * props.zoom;
     const sh = (txt.height ?? 40) * props.zoom;
+    const normalizedColor = txt.color.startsWith('#') ? txt.color : `#${txt.color}`;
 
     setEditingOverlay({
       id: txt.id,
@@ -109,7 +110,7 @@ export const PixiCanvasBoard = memo(function PixiCanvasBoard(props: PixiCanvasBo
       fontFamily: txt.fontFamily,
       fontSize: txt.fontSize * props.zoom,
       fontWeight: txt.fontWeight,
-      color: `#${txt.color}`,
+      color: normalizedColor,
       align: txt.align,
       lineHeight: txt.lineHeight,
       letterSpacing: txt.letterSpacing,

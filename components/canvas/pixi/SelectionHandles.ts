@@ -27,10 +27,13 @@ export class SelectionHandles {
 
   constructor(
     private readonly onHandlePointerDown: (id: HandleId, e: PointerEvent) => void,
+    private readonly onHandleHoverChange?: (hovering: boolean, cursor?: string) => void,
   ) {
     this.container = new Container();
     this.container.label = 'selection-handles';
-    this.container.eventMode = 'none';
+    // 'passive' allows PixiJS v8 to recurse into children (handle Graphics) for
+    // hit-testing while keeping the container border itself non-interactive.
+    this.container.eventMode = 'passive';
 
     this.border = new Graphics();
     this.container.addChild(this.border);
@@ -44,6 +47,8 @@ export class SelectionHandles {
         ev.stopPropagation();
         this.onHandlePointerDown(def.id, ev.nativeEvent as PointerEvent);
       });
+      g.on('pointerenter', () => this.onHandleHoverChange?.(true, def.cursor));
+      g.on('pointerleave', () => this.onHandleHoverChange?.(false));
       this.handles.set(def.id, g);
       this.container.addChild(g);
     }
@@ -101,6 +106,7 @@ export class SelectionHandles {
   }
 
   destroy() {
+    this.onHandleHoverChange?.(false);
     this.border.destroy();
     for (const g of this.handles.values()) g.destroy();
     this.container.destroy();
