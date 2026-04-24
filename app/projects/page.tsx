@@ -429,30 +429,19 @@ export default function ProjectsPage() {
               />
               <div className="relative flex-1 p-6 sm:p-8">
                 <div className="inline-flex items-center gap-2 bg-black/30 border border-white/20 rounded-full px-3 py-1 mb-3">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white">New Model</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white">New Models: Recraft V4/V4 Vector and GPT Image-2</span>
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-display font-black text-white leading-tight mb-2">
                   Finally, AI that understands design
                 </h2>
                 <p className="text-sm text-white/80 max-w-lg mb-4">
-                  Meet V4, our most advanced image generation model. Deliberate aesthetic decisions, exceptional prompt understanding, and output quality that holds up at any size.
+                  Meet V4 and GPT IMAGE-2, the most advanced image generation model. Deliberate aesthetic decisions, exceptional prompt understanding, and output quality that holds up at any size.
                 </p>
                 <Button variant="outline" size="sm" className="border-white/30 text-white hover:bg-white/10 rounded-full font-bold" asChild>
-                  <Link href="/projects">Learn more</Link>
+                  <Link href="/">Learn more</Link>
                 </Button>
               </div>
-              <div className="hidden sm:block relative w-48 lg:w-64 h-36 shrink-0 mr-4 rounded-xl overflow-hidden border border-white/10">
-                {/* Placeholder art */}
-                <div className="w-full h-full bg-gradient-to-br from-purple-900/80 to-black/60 flex items-center justify-center">
-                  <Sparkles className="w-16 h-16 text-white/20" />
-                </div>
-              </div>
-              <button
-                onClick={() => setBannerDismissed(true)}
-                className="absolute top-3 right-3 w-7 h-7 rounded-full bg-black/30 border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/50 transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              
             </motion.div>
           )}
         </AnimatePresence>
