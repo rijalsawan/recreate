@@ -21,49 +21,65 @@ const FALLBACK_BG = [
 
 export default function PhotorealCarousel({ images }: PhotorealCarouselProps) {
   const [current, setCurrent] = useState(0);
-  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const count = images.length > 0 ? images.length : 3;
+  const slides: Array<{ key: string; image?: string; background?: string }> = images.length > 0
+    ? images.map((src, index) => ({ key: `image-${index}-${src}`, image: src }))
+    : FALLBACK_BG.map((background, index) => ({ key: `fallback-${index}`, background }));
+  const count = slides.length;
 
   const goTo = useCallback((index: number) => {
-    if (isTransitioning) return;
-    setIsTransitioning(true);
-    setCurrent(index);
-    setTimeout(() => setIsTransitioning(false), 750);
-  }, [isTransitioning]);
+    if (count <= 0) return;
+    const normalized = ((index % count) + count) % count;
+    setCurrent(normalized);
+  }, [count]);
 
   const next = useCallback(() => goTo((current + 1) % count), [current, count, goTo]);
   const prev = useCallback(() => goTo((current - 1 + count) % count), [current, count, goTo]);
 
   useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setPrefersReducedMotion(media.matches);
+    sync();
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
+  useEffect(() => {
+    if (count <= 1 || prefersReducedMotion) return;
     timerRef.current = setTimeout(next, 5000);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [current, next]);
+  }, [current, next, count, prefersReducedMotion]);
 
   const prevIndex = (current - 1 + count) % count;
   const nextIndex = (current + 1) % count;
 
   const renderPanel = (activeIndex: number, dimmed: boolean, flexClass: string) => (
-    <div className={`relative ${flexClass} rounded-xl overflow-hidden flex-shrink-0`}>
-      {images.length > 0
-        ? images.map((src, i) => (
-            <div
-              key={src}
-              className="absolute inset-0 transition-opacity duration-700 ease-in-out"
-              style={{ opacity: i === activeIndex ? 1 : 0 }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt="" className="w-full h-full object-cover" loading="lazy" />
-            </div>
-          ))
-        : FALLBACK_BG.map((bg, i) => (
-            <div
-              key={i}
-              className="absolute inset-0 transition-opacity duration-700 ease-in-out"
-              style={{ opacity: i === activeIndex % 3 ? 1 : 0, background: bg }}
-            />
-          ))
-      }
+    <div className={`relative ${flexClass} rounded-xl overflow-hidden shrink-0`}>
+      <div
+        className={`flex h-full w-full ${prefersReducedMotion ? '' : 'transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]'}`}
+        style={{
+          width: `${count * 100}%`,
+          transform: `translate3d(-${activeIndex * (100 / count)}%, 0, 0)`,
+        }}
+      >
+        {slides.map((slide) => (
+          <div key={slide.key} className="relative h-full shrink-0" style={{ width: `${100 / count}%` }}>
+            {slide.image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={slide.image} alt="" className="w-full h-full object-cover" loading="lazy" />
+            ) : (
+              <div className="absolute inset-0" style={{ background: slide.background }} />
+            )}
+          </div>
+        ))}
+      </div>
       {dimmed && <div className="absolute inset-0 bg-black/55 pointer-events-none" />}
     </div>
   );

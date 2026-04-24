@@ -8,7 +8,7 @@ export const TOOLS: Record<string, ToolConfig> = {
     icon: 'image',
     route: '/generate',
     category: 'generate',
-    supportedModels: ['recraftv4', 'recraftv4_vector', 'recraftv4_pro', 'recraftv4_pro_vector', 'recraftv3', 'recraftv3_vector', 'recraftv2', 'recraftv2_vector', 'gemini-2.5-flash'],
+    supportedModels: ['recraftv4', 'recraftv4_vector', 'recraftv4_pro', 'recraftv4_pro_vector', 'recraftv3', 'recraftv3_vector', 'recraftv2', 'recraftv2_vector', 'gpt-image-2'],
     creditsPerGeneration: 40,
     supportsPrompt: true,
     supportsFileUpload: false,

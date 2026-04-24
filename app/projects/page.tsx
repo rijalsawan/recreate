@@ -302,7 +302,7 @@ export default function ProjectsPage() {
 
     try {
       setLoading(true);
-      const res = await fetch(`/api/projects?scope=${scope}`);
+      const res = await fetch(`/api/projects?scope=${scope}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setProjects(data);
@@ -315,6 +315,29 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     fetchProjects(activeTab);
+  }, [activeTab, fetchProjects]);
+
+  useEffect(() => {
+    const refetch = () => {
+      if (document.visibilityState !== 'visible') return;
+      void fetchProjects(activeTab);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchProjects(activeTab);
+      }
+    };
+
+    window.addEventListener('focus', refetch);
+    window.addEventListener('pageshow', refetch);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', refetch);
+      window.removeEventListener('pageshow', refetch);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [activeTab, fetchProjects]);
 
   useEffect(() => {

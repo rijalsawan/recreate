@@ -63,3 +63,14 @@ export function unlockBodyScroll(): void {
 
   notifyLockState();
 }
+
+export function resetBodyScrollLock(): void {
+  if (!canUseDom()) return;
+
+  activeLocks = 0;
+  const { body } = document;
+  body.style.overflow = '';
+  body.style.paddingRight = '';
+
+  notifyLockState();
+}

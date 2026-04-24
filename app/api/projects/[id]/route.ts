@@ -60,7 +60,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const data: Record<string, unknown> = {};
   if (typeof body.name === 'string') data.name = body.name.slice(0, 100);
   if (body.canvasData !== undefined) data.canvasData = body.canvasData;
-  if (typeof body.thumbnail === 'string') data.thumbnail = body.thumbnail;
+  if (body.thumbnail === null || typeof body.thumbnail === 'string') {
+    data.thumbnail = body.thumbnail;
+  }
 
   try {
     const project = await withPrismaRetry(() => prisma.project.update({ where: { id }, data }));

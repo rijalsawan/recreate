@@ -40,6 +40,41 @@ type SelectedStyleMeta = {
 };
 
 const PENDING_STYLE_SESSION_KEY = 'pendingStyleApply';
+const PROJECT_THUMBNAIL_MAX_WIDTH = 640;
+const PROJECT_THUMBNAIL_MAX_HEIGHT = 480;
+const PROJECT_THUMBNAIL_MAX_BYTES = 220_000;
+
+function createProjectThumbnailFromCanvas(canvas: HTMLCanvasElement | null): string | null {
+  if (!canvas || typeof document === 'undefined') return null;
+
+  const sourceWidth = canvas.width || canvas.clientWidth;
+  const sourceHeight = canvas.height || canvas.clientHeight;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return null;
+
+  const scale = Math.min(
+    1,
+    PROJECT_THUMBNAIL_MAX_WIDTH / sourceWidth,
+    PROJECT_THUMBNAIL_MAX_HEIGHT / sourceHeight,
+  );
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+  const thumbnailCanvas = document.createElement('canvas');
+  thumbnailCanvas.width = targetWidth;
+  thumbnailCanvas.height = targetHeight;
+
+  const context = thumbnailCanvas.getContext('2d');
+  if (!context) return null;
+
+  context.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+
+  try {
+    const dataUrl = thumbnailCanvas.toDataURL('image/jpeg', 0.72);
+    return dataUrl.length <= PROJECT_THUMBNAIL_MAX_BYTES ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseSelectedStyleMeta(value: unknown): SelectedStyleMeta | null {
   if (!value || typeof value !== 'object') return null;
@@ -559,6 +594,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           return;
         }
         if (data.name) setProjectName(data.name);
+        lastSavedThumbnailRef.current = typeof data.thumbnail === 'string' && data.thumbnail.length > 0
+          ? data.thumbnail
+          : null;
 
         // DB snapshot
         const cd = data.canvasData as { images?: CanvasImage[]; texts?: CanvasText[]; brushStrokes?: BrushStroke[]; history?: unknown } | null;
@@ -1228,6 +1266,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   type AutoSaveStatus = 'idle' | 'pending' | 'saved';
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedThumbnailRef = useRef<string | null>(null);
 
   const selectedImage = useMemo(() => canvasImages.find((img) => img.id === selectedImageId) ?? null, [canvasImages, selectedImageId]);
   const isImageSelected = !!selectedImage;
@@ -1476,11 +1515,32 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       const dbBody = JSON.stringify(fullPayload).length <= DB_PAYLOAD_LIMIT
         ? fullPayload
         : { canvasData: { images: dbImages, texts: canvasTexts, brushStrokes: [], history: dbHistory } };
+
+      const renderCanvas = canvasRef.current?.querySelector('canvas');
+      const thumbnailFromCanvas = createProjectThumbnailFromCanvas(
+        renderCanvas instanceof HTMLCanvasElement ? renderCanvas : null,
+      );
+      const fallbackThumbnail = [...dbImages]
+        .reverse()
+        .find((img) => typeof img.url === 'string' && img.url.length > 0)?.url ?? null;
+      const nextThumbnail = thumbnailFromCanvas ?? fallbackThumbnail;
+      const shouldUpdateThumbnail = nextThumbnail !== lastSavedThumbnailRef.current;
+
+      const requestBody = shouldUpdateThumbnail
+        ? { ...dbBody, thumbnail: nextThumbnail }
+        : dbBody;
+
       fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dbBody),
-      }).catch(() => {});
+        body: JSON.stringify(requestBody),
+      })
+        .then(() => {
+          if (shouldUpdateThumbnail) {
+            lastSavedThumbnailRef.current = nextThumbnail;
+          }
+        })
+        .catch(() => {});
     }, 1200);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7117,11 +7177,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     title="GPT Image 1.5" time="15 seconds" cost={50} isNew icon="G1"
                     selected={selectedModel === 'GPT Image 1.5'} onClick={() => { setSelectedModel('GPT Image 1.5'); setActiveDropdown(null); }}
                   />
-                  <div className="py-2 px-3 text-xs font-bold text-white mt-1">Gemini models</div>
-                  <ModelItem
-                    title="Gemini 2.5 Flash" time="6 seconds" cost={0} icon="GF"
-                    selected={selectedModel === 'Gemini 2.5 Flash'} onClick={() => { setSelectedModel('Gemini 2.5 Flash'); setActiveDropdown(null); }}
-                  />
                   <div className="py-2 px-3 text-xs font-bold text-white mt-1">Recraft flagship models</div>
                   <ModelItem 
                     title="Recraft V4" time="10 seconds" cost={40} isNew
@@ -9347,7 +9402,6 @@ const STYLE_TEST_MODEL_OPTIONS = [
   { label: 'Recraft V3', value: 'recraftv3' },
   { label: 'GPT Image 2', value: 'gpt-image-2' },
   { label: 'GPT Image 1.5', value: 'gpt-image-1.5' },
-  { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
 ] as const;
 
 const STYLE_TEST_MODELS_WITH_ATTACHMENTS = new Set<string>([
@@ -9805,12 +9859,6 @@ function CreateStyleModal({
             rows={3}
             className="w-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
           />
-
-          {testModel === 'gemini-2.5-flash' && hasImages && (
-            <p className="mt-2 text-[11px] text-amber-500/80">
-              Gemini currently runs prompt-only in this app, so reference images are ignored for test generation.
-            </p>
-          )}
 
           {testImageUrl && (
             <div className="mt-4 w-full aspect-square rounded-xl overflow-hidden border border-gray-200 dark:border-white/10 shrink-0">

@@ -2390,7 +2390,6 @@ const STYLE_TEST_MODEL_OPTIONS = [
   { label: 'Recraft V3', value: 'recraftv3' },
   { label: 'GPT Image 2', value: 'gpt-image-2' },
   { label: 'GPT Image 1', value: 'gpt-image-1' },
-  { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
 ] as const;
 
 const STYLE_TEST_MODELS_WITH_ATTACHMENTS = new Set<string>([
@@ -2891,12 +2890,6 @@ function CreateStyleModal({
             rows={3}
             className="w-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
           />
-
-          {testModel === 'gemini-2.5-flash' && hasImages && (
-            <p className="mt-2 text-[11px] text-amber-500/80">
-              Gemini currently runs prompt-only in this app, so reference images are ignored for test generation.
-            </p>
-          )}
 
           {testImageUrl && (
             <div className="mt-4 w-full aspect-square rounded-xl overflow-hidden border border-gray-200 dark:border-white/10 shrink-0">

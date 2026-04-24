@@ -45,14 +45,6 @@ const MODEL_FAMILIES = [
       { value: 'recraftv2_vector', label: 'Vector', description: 'Classic vector' },
     ],
   },
-  {
-    id: 'gemini',
-    label: 'Gemini',
-    badge: 'Free',
-    variants: [
-      { value: 'gemini-2.5-flash', label: '2.5 Flash', description: 'Google AI · Free' },
-    ],
-  },
 ];
 
 const ASPECT_RATIOS = [

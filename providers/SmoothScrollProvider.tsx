@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import Lenis from 'lenis';
 import { gsap } from '@/lib/gsap';
+import { resetBodyScrollLock } from '@/lib/body-scroll-lock';
 
 interface SmoothScrollProviderProps {
   children: React.ReactNode;
@@ -12,6 +13,12 @@ export function SmoothScrollProvider({ children }: SmoothScrollProviderProps) {
   const lenisRef = useRef<Lenis | null>(null);
 
   useEffect(() => {
+    const initialLockCount = Number(document.body.dataset.scrollLockCount || '0');
+    const hasStaleLock = initialLockCount > 0 || document.body.style.overflow === 'hidden';
+    if (hasStaleLock) {
+      resetBodyScrollLock();
+    }
+
     const prefersReducedMotion = window.matchMedia(
       '(prefers-reduced-motion: reduce)',
     ).matches;
@@ -40,8 +47,8 @@ export function SmoothScrollProvider({ children }: SmoothScrollProviderProps) {
       lenis.start();
     };
 
-    const initialLockCount = Number(document.body.dataset.scrollLockCount || '0');
-    if (initialLockCount > 0) {
+    const currentLockCount = Number(document.body.dataset.scrollLockCount || '0');
+    if (currentLockCount > 0) {
       lenis.stop();
     }
 

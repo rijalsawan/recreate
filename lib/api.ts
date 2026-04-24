@@ -94,7 +94,7 @@ class ApiClient {
     });
   }
 
-  async updateProject(id: string, data: { name?: string; canvasData?: unknown; thumbnail?: string }) {
+  async updateProject(id: string, data: { name?: string; canvasData?: unknown; thumbnail?: string | null }) {
     return this.request(`/projects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(data),

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { gsap } from '@/lib/gsap';
 import { useAuthModal } from '@/stores/useAuthModal';
+import Link from 'next/link';
 
 interface HeroProps {
   images: string[];
@@ -17,41 +18,56 @@ const FALLBACK_GRADIENTS = [
 
 export default function Hero({ images }: HeroProps) {
   const [current, setCurrent] = useState(0);
-  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { openModal } = useAuthModal();
 
-  const count = images.length > 0 ? images.length : 3;
+  const slides: Array<{ key: string; image?: string; background?: string }> = images.length > 0
+    ? images.map((src, index) => ({ key: `image-${index}-${src}`, image: src }))
+    : FALLBACK_GRADIENTS.map((background, index) => ({ key: `fallback-${index}`, background }));
+  const count = slides.length;
 
   const goTo = useCallback(
     (index: number) => {
-      if (isTransitioning) return;
-      setIsTransitioning(true);
-      setCurrent(index);
-      setTimeout(() => setIsTransitioning(false), 800);
+      if (count <= 0) return;
+      const normalized = ((index % count) + count) % count;
+      setCurrent(normalized);
     },
-    [isTransitioning],
+    [count],
   );
 
   const next = useCallback(() => goTo((current + 1) % count), [current, count, goTo]);
   const prev = useCallback(() => goTo((current - 1 + count) % count), [current, count, goTo]);
 
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setPrefersReducedMotion(media.matches);
+    sync();
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
   // Auto-advance
   useEffect(() => {
-    if (count <= 1) return;
+    if (count <= 1 || prefersReducedMotion) return;
     timerRef.current = setTimeout(next, 6000);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [current, count, next]);
+  }, [current, count, next, prefersReducedMotion]);
 
   // Entrance animation — static text animates in once on mount
   useEffect(() => {
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReducedMotion || !textRef.current) return;
     gsap.from(textRef.current, { y: 24, opacity: 0, duration: 0.9, delay: 0.35, ease: 'power3.out' });
-  }, []);
+  }, [prefersReducedMotion]);
 
   return (
     <section className="bg-black">
@@ -60,7 +76,7 @@ export default function Hero({ images }: HeroProps) {
         {/* ── Announcement strip ─────────────────────────────────── */}
         <div className="bg-violet-600 py-2.5 px-4">
           <div className="max-w-7xl mx-auto flex items-center justify-center gap-2.5">
-            <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+            <span className="relative flex h-1.5 w-1.5 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
               <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white" />
             </span>
@@ -76,72 +92,71 @@ export default function Hero({ images }: HeroProps) {
             className="relative rounded-[20px] overflow-hidden w-full"
             style={{ height: 'clamp(420px, calc(100svh - 168px), 920px)' }}
           >
-            {/* ── Slides: only background changes per slide ─────── */}
-            {images.length > 0
-              ? images.map((src, i) => (
+            <div className="absolute inset-0 overflow-hidden">
+              <div
+                className={`flex h-full w-full ${prefersReducedMotion ? '' : 'transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]'}`}
+                style={{
+                  width: `${count * 100}%`,
+                  transform: `translate3d(-${current * (100 / count)}%, 0, 0)`,
+                }}
+              >
+                {slides.map((slide, i) => (
                   <div
-                    key={src}
+                    key={slide.key}
                     aria-hidden={i !== current}
-                    className="absolute inset-0 transition-opacity duration-700 ease-in-out"
-                    style={{ opacity: i === current ? 1 : 0 }}
+                    className="relative h-full shrink-0"
+                    style={{ width: `${100 / count}%` }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={src}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading={i === 0 ? 'eager' : 'lazy'}
-                      fetchPriority={i === 0 ? 'high' : 'low'}
-                      decoding={i === 0 ? 'sync' : 'async'}
-                    />
+                    {slide.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={slide.image}
+                        alt=""
+                        className="w-full h-full lg:object-contain max-sm:object-cover"
+                        loading={i === 0 ? 'eager' : 'lazy'}
+                        fetchPriority={i === 0 ? 'high' : 'low'}
+                        decoding={i === 0 ? 'sync' : 'async'}
+                      />
+                    ) : (
+                      <div className="absolute inset-0" style={{ background: slide.background }} />
+                    )}
                   </div>
-                ))
-              : FALLBACK_GRADIENTS.map((bg, i) => (
-                  <div
-                    key={i}
-                    aria-hidden={i !== current % 3}
-                    className="absolute inset-0 transition-opacity duration-700 ease-in-out"
-                    style={{ opacity: i === current % 3 ? 1 : 0, background: bg }}
-                  />
                 ))}
+              </div>
+            </div>
 
             {/* Gradient — helps legibility of bottom text */}
-            <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/82 via-black/10 to-black/28" />
+            <div className="absolute inset-0 pointer-events-none bg-linear-to-t from-black/82 via-black/10 to-black/28" />
 
             {/* ── Static text — stays fixed across ALL slides ────── */}
             <div
               ref={textRef}
               className="absolute bottom-0 left-0 right-0 z-10 px-8 pb-14 md:px-12 pointer-events-auto"
             >
-              <p className="text-[10px] uppercase tracking-[0.22em] text-white/50 mb-3 font-medium select-none">
-                AI Image Platform &mdash; Recreate Studio
-              </p>
+              
               <h1
                 className="font-display font-black uppercase italic text-white leading-[0.88] select-none"
                 style={{ fontSize: 'clamp(2.6rem, 7vw, 5.8rem)' }}
               >
-                RECREATE<br />
+                {/* {/* donot change line 141 i ddid it manually for responsiveness */}
+                <span className="max-sm:text-[2rem]">RECREATE</span>
+                <br />
                 <span className="not-italic font-bold tracking-tight">ANYTHING.</span><br />
-                INSTANTLY.
+                {/* donot change line 144 i ddid it manually for responsiveness */}
+                <span className="max-sm:text-[2rem]">INSTANTLY.</span> 
               </h1>
               <p className="mt-4 text-white/65 text-sm md:text-base max-w-[320px] leading-relaxed select-none">
                 The fastest way to generate, edit, and export production&#8209;quality visuals — from prompt to pixel.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
+                <Link href="/projects">
                 <button
                   type="button"
-                  onClick={() => openModal('signup')}
                   className="h-11 px-7 rounded-full bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-colors shadow-[0_0_28px_-4px_rgba(124,58,237,0.75)]"
                 >
                   Start creating
                 </button>
-                <button
-                  type="button"
-                  onClick={() => openModal('login')}
-                  className="h-11 px-7 rounded-full border border-white/25 text-white font-semibold text-sm hover:bg-white/10 transition-colors"
-                >
-                  Get API
-                </button>
+                </Link>
               </div>
             </div>
 

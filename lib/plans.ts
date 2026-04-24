@@ -8,10 +8,8 @@ export const FREE_DAILY_UPLOAD_LIMIT = 3;
 export const FREE_MAX_IMAGES_PER_REQUEST = 2;
 
 export const FREE_ALLOWED_MODELS = [
-  'gemini-2.5-flash',
-  'recraftv2',
-  'recraftv2_vector',
-  'recraftv3',
+  'gpt-image-2',
+  'recraftv4_vector',
   'recraftv3_vector',
 ] as const;
 
@@ -46,7 +44,7 @@ export const PUBLIC_PLAN_CARDS: ReadonlyArray<PublicPlanCard> = [
     features: [
       `${FREE_DAILY_ACTION_LIMIT} AI actions per day`,
       `${FREE_DAILY_UPLOAD_LIMIT} uploads per day`,
-      'Gemini 2.5 Flash + Recraft V2/V3 models',
+      'GPT Image 2 + Recraft V4/V3 Vector models',
       'Community support',
     ],
     ctaLabel: 'Start free',

@@ -44,8 +44,7 @@ interface DragImageState {
   origY: number;
   startClientX: number;
   startClientY: number;
-  pointerOffsetX: number;
-  pointerOffsetY: number;
+  startZoom: number;
   liveX: number;
   liveY: number;
 }
@@ -87,6 +86,7 @@ interface PanState {
   vy: number;
   lastClientX: number;
   lastClientY: number;
+  pointerType: string;
 }
 
 interface CurrentStroke {
@@ -431,9 +431,17 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     }
   }
 
+  function resetMousePointerTracking(e: PointerEvent) {
+    if (e.pointerType !== 'mouse') return;
+    activePointersRef.current.clear();
+    pinchPrevDistRef.current = null;
+  }
+
   function handleImagePointerDown(e: PointerEvent, imgId: string) {
     if (e.button !== 0) return; // Let non-left-clicks reach onPointerDown (e.g. middle-click pan)
+    resetMousePointerTracking(e);
     capturePointer(e.pointerId);
+    e.preventDefault();
     e.stopImmediatePropagation(); // Prevent onPointerDown from also firing on the canvas element
     // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
     if (momentumRafRef.current !== null) {
@@ -467,24 +475,27 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       const img = p.canvasImages.find((i) => i.id === imgId);
       if (!img) return;
       p.onSelectImage(imgId);
-      const pointerWorld = clientToWorld(e.clientX, e.clientY);
+      const node = imageNodesRef.current.get(imgId);
+      const liveX = node ? node.container.x : img.x;
+      const liveY = node ? node.container.y : img.y;
       dragImageRef.current = {
         id: imgId,
-        origX: img.x,
-        origY: img.y,
+        origX: liveX,
+        origY: liveY,
         startClientX: e.clientX,
         startClientY: e.clientY,
-        pointerOffsetX: pointerWorld.x - img.x,
-        pointerOffsetY: pointerWorld.y - img.y,
-        liveX: img.x,
-        liveY: img.y,
+        startZoom: liveZoom.current,
+        liveX,
+        liveY,
       };
     }
   }
 
   function handleTextPointerDown(e: PointerEvent, txtId: string) {
     if (e.button !== 0) return;
+    resetMousePointerTracking(e);
     capturePointer(e.pointerId);
+    e.preventDefault();
     e.stopImmediatePropagation();
     // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
     if (momentumRafRef.current !== null) {
@@ -520,7 +531,9 @@ export function usePixiCanvas(props: PixiCanvasProps) {
 
   function handleStrokePointerDown(e: PointerEvent, strokeId: string) {
     if (e.button !== 0) return;
+    resetMousePointerTracking(e);
     capturePointer(e.pointerId);
+    e.preventDefault();
     e.stopImmediatePropagation();
     // Cancel any in-flight pan momentum so the board doesn't jump while dragging a node.
     if (momentumRafRef.current !== null) {
@@ -546,7 +559,9 @@ export function usePixiCanvas(props: PixiCanvasProps) {
 
   function handleResizeDown(handleId: HandleId, e: PointerEvent, kind: 'image' | 'text', nodeId: string) {
     if (e.button !== 0) return;
+    resetMousePointerTracking(e);
     capturePointer(e.pointerId);
+    e.preventDefault();
     e.stopImmediatePropagation(); // Prevent onPointerDown deselect from destroying handles on click
     // Cancel momentum so the board doesn't move during resize.
     if (momentumRafRef.current !== null) {
@@ -590,6 +605,7 @@ export function usePixiCanvas(props: PixiCanvasProps) {
       vy: 0,
       lastClientX: e.clientX,
       lastClientY: e.clientY,
+      pointerType: e.pointerType,
     };
   }
 
@@ -705,6 +721,10 @@ export function usePixiCanvas(props: PixiCanvasProps) {
   // ── Raw pointer event handlers attached to canvas element ────────────────
 
   function onPointerDown(e: PointerEvent) {
+    // Node-level handlers (image/text/stroke/resize) call preventDefault on the
+    // native event. Skip canvas-level handling to avoid competing gesture state.
+    if (e.defaultPrevented) return;
+
     const p = propsRef.current;
 
     // Mouse pointers cannot be multi-touch; clear stale pointer bookkeeping to
@@ -852,11 +872,14 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     // Image drag
     const drag = dragImageRef.current;
     if (drag) {
-      // Anchor drag to the pointer's world-space offset from image origin.
-      // This remains stable even if zoom/pan changes mid-drag.
-      const pointerWorld = clientToWorld(e.clientX, e.clientY);
-      const rawX = pointerWorld.x - drag.pointerOffsetX;
-      const rawY = pointerWorld.y - drag.pointerOffsetY;
+      // Use client-space delta anchored to the zoom at drag-start.
+      // This is identical to the text/stroke drag approach and is immune to
+      // pan-state changes between pointer-down and pointer-move (which could
+      // cause a jump when using the world-space clientToWorld approach).
+      const dx = (e.clientX - drag.startClientX) / drag.startZoom;
+      const dy = (e.clientY - drag.startClientY) / drag.startZoom;
+      const rawX = drag.origX + dx;
+      const rawY = drag.origY + dy;
       const { x, y, lines } = propsRef.current.computeSnap(drag.id, rawX, rawY);
       drag.liveX = x;
       drag.liveY = y;
@@ -953,7 +976,13 @@ export function usePixiCanvas(props: PixiCanvasProps) {
     if (pan && !dragImageRef.current && !dragTextRef.current && !dragStrokeRef.current && !brushStrokeRef.current) {
       // Momentum (skipped when user prefers reduced motion)
       const { vx, vy } = pan;
-      if (!PREFERS_REDUCED_MOTION && (Math.abs(vx) > MIN_VELOCITY || Math.abs(vy) > MIN_VELOCITY)) {
+      // Keep mouse/pen panning precise; only touch drags get inertial momentum.
+      const shouldApplyMomentum =
+        pan.pointerType === 'touch'
+        && !PREFERS_REDUCED_MOTION
+        && (Math.abs(vx) > MIN_VELOCITY || Math.abs(vy) > MIN_VELOCITY);
+
+      if (shouldApplyMomentum) {
         pan.origPanX = livePanX.current;
         pan.origPanY = livePanY.current;
         pan.startClientX = 0; pan.startClientY = 0;
