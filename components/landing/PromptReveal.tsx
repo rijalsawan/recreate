@@ -1,20 +1,16 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type PromptPoint = {
+export type PromptPoint = {
   id: string;
   x: string; // % from left, e.g. "30%"
   y: string; // % from top, e.g. "22%"
   label: string;
   prompt: string;
   highlights: string[]; // phrases to bold within the prompt
-};
-
-type PromptRevealConfig = {
-  points: PromptPoint[];
 };
 
 // ── Defaults (used until backend config is loaded) ─────────────────────────────
@@ -101,129 +97,131 @@ function renderHighlighted(prompt: string, highlights: string[]): React.ReactNod
 
 interface PromptRevealProps {
   image: string | null;
+  initialPoints?: PromptPoint[] | null;
 }
 
-export default function PromptReveal({ image }: PromptRevealProps) {
+export default function PromptReveal({ image, initialPoints }: PromptRevealProps) {
   const [activePoint, setActivePoint] = useState<string | null>(null);
-  const [points, setPoints] = useState<PromptPoint[]>(DEFAULT_POINTS);
-
-  // Fetch admin-configured hover points from the backend
-  useEffect(() => {
-    fetch('/api/landing-config?key=prompt-reveal-points')
-      .then((r) => r.json())
-      .then((data: { value?: PromptRevealConfig }) => {
-        if (data?.value?.points && Array.isArray(data.value.points) && data.value.points.length > 0) {
-          setPoints(data.value.points);
-        }
-      })
-      .catch(() => {
-        // silently fall back to defaults
-      });
-  }, []);
+  const points = initialPoints?.length ? initialPoints : DEFAULT_POINTS;
 
   return (
-    <section className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: '16/9', maxHeight: '92vh' }}>
-      {/* Background image */}
-      {image ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={image}
-          alt="AI-generated editorial scene"
-          className="w-full h-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-      ) : (
-        <div
-          className="w-full h-full flex items-center justify-center"
-          style={{ background: 'linear-gradient(135deg, #0f1923 0%, #080810 60%, #1a1230 100%)' }}
-        >
-          <p className="text-white/15 text-sm select-none">
-            Editorial scene — add an image via Image Director
+    <section className="bg-black px-4 sm:px-8 md:px-10 pb-10">
+      <div
+        className="relative w-full max-w-400 mx-auto rounded-[20px] overflow-hidden"
+        style={{ aspectRatio: '16/9', maxHeight: '92vh' }}
+      >
+        {/* Background image */}
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image}
+            alt="AI-generated editorial scene"
+            className="w-full h-full object-cover"
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div
+            className="w-full h-full flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, #0f1923 0%, #080810 60%, #1a1230 100%)' }}
+          >
+            <p className="text-white/15 text-sm select-none">
+              Editorial scene — add an image via Image Director
+            </p>
+          </div>
+        )}
+
+        <div className="absolute inset-0 pointer-events-none bg-linear-to-t from-black/72 via-black/8 to-black/20" />
+
+        <div className="absolute left-4 top-4 sm:left-6 sm:top-6 md:left-10 md:top-10 z-20 pointer-events-none">
+          <p
+            className="font-display font-black uppercase italic text-white leading-[0.84] select-none drop-shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+            style={{ fontSize: 'clamp(0.95rem, 4.6vw, 4.4rem)' }}
+          >
+            <span className="block">EXCEPTIONAL</span>
+            <span className="block not-italic tracking-tight">PROMPT</span>
+            <span className="block">UNDERSTANDING</span>
           </p>
         </div>
-      )}
 
-      {/* Bottom vignette */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
+        {/* ── Hover points ──────────────────────────────────────── */}
+        {points.map((point) => {
+          const isActive = activePoint === point.id;
+          const xVal = parseFloat(point.x);
+          // Flip tooltip to the left when the point is in the right 40% of the image
+          const flipLeft = xVal > 60;
 
-      {/* ── Hover points ──────────────────────────────────────── */}
-      {points.map((point) => {
-        const isActive = activePoint === point.id;
-        const xVal = parseFloat(point.x);
-        // Flip tooltip to the left when the point is in the right 40% of the image
-        const flipLeft = xVal > 60;
-
-        return (
-          <div
-            key={point.id}
-            className="absolute"
-            style={{ left: point.x, top: point.y, transform: 'translate(-50%, -50%)', zIndex: 10 }}
-            onMouseEnter={() => setActivePoint(point.id)}
-            onMouseLeave={() => setActivePoint(null)}
-          >
-            {/* Pulse ring — stops pinging when active */}
-            {!isActive && (
-              <div className="absolute -inset-3 rounded-full border border-white/35 animate-ping" />
-            )}
-            <div className="absolute -inset-3 rounded-full border border-white/15" />
-
-            {/* Indicator dot */}
+          return (
             <div
-              className={`relative w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all duration-200 ${
-                isActive ? 'border-white bg-white scale-125' : 'border-white/70 bg-white/20 scale-100'
-              }`}
+              key={point.id}
+              className="hidden lg:block absolute"
+              style={{ left: point.x, top: point.y, transform: 'translate(-50%, -50%)', zIndex: 10 }}
+              onMouseEnter={() => setActivePoint(point.id)}
+              onMouseLeave={() => setActivePoint(null)}
             >
+              {/* Pulse ring — stops pinging when active */}
+              {!isActive && (
+                <div className="absolute -inset-3 rounded-full border border-white/35 animate-ping" />
+              )}
+              <div className="absolute -inset-3 rounded-full border border-white/15" />
+
+              {/* Indicator dot */}
               <div
-                className={`w-1.5 h-1.5 rounded-full transition-colors ${isActive ? 'bg-black' : 'bg-white'}`}
-              />
-            </div>
-
-            {/* Tooltip bubble */}
-            <div
-              className={`absolute w-64 rounded-2xl border border-white/10 shadow-2xl transition-all duration-200 origin-bottom pointer-events-none ${
-                isActive ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-              } ${
-                flipLeft
-                  ? 'right-full mr-5 top-1/2 -translate-y-1/2 origin-right'
-                  : 'bottom-full mb-5 left-1/2 -translate-x-1/2 origin-bottom'
-              }`}
-              style={{ background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(12px)' }}
-            >
-              <div className="p-4">
-                <p className="text-[10px] uppercase tracking-widest text-black/40 mb-2 font-medium">
-                  {point.label}
-                </p>
-                <p className="text-[13px] leading-relaxed">
-                  {renderHighlighted(point.prompt, point.highlights)}
-                </p>
+                className={`relative w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all duration-200 ${
+                  isActive ? 'border-white bg-white scale-125' : 'border-white/70 bg-white/20 scale-100'
+                }`}
+              >
+                <div
+                  className={`w-1.5 h-1.5 rounded-full transition-colors ${isActive ? 'bg-black' : 'bg-white'}`}
+                />
               </div>
-              {/* Caret for bottom-positioned tooltip */}
-              {!flipLeft && (
-                <div
-                  className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0"
-                  style={{
-                    borderLeft: '7px solid transparent',
-                    borderRight: '7px solid transparent',
-                    borderTop: '7px solid rgba(255,255,255,0.97)',
-                  }}
-                />
-              )}
-              {/* Caret for right-positioned tooltip */}
-              {flipLeft && (
-                <div
-                  className="absolute left-full top-1/2 -translate-y-1/2 w-0 h-0"
-                  style={{
-                    borderTop: '7px solid transparent',
-                    borderBottom: '7px solid transparent',
-                    borderLeft: '7px solid rgba(255,255,255,0.97)',
-                  }}
-                />
-              )}
+
+              {/* Tooltip bubble */}
+              <div
+                className={`absolute w-[min(256px,calc(100vw-48px))] rounded-2xl border border-white/10 shadow-2xl transition-all duration-200 origin-bottom pointer-events-none ${
+                  isActive ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+                } ${
+                  flipLeft
+                    ? 'right-full mr-5 top-1/2 -translate-y-1/2 origin-right'
+                    : 'bottom-full mb-5 left-1/2 -translate-x-1/2 origin-bottom'
+                }`}
+                style={{ background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(12px)' }}
+              >
+                <div className="p-4">
+                  <p className="text-[10px] uppercase tracking-widest text-black/40 mb-2 font-medium">
+                    {point.label}
+                  </p>
+                  <p className="text-[13px] leading-relaxed">
+                    {renderHighlighted(point.prompt, point.highlights)}
+                  </p>
+                </div>
+                {/* Caret for bottom-positioned tooltip */}
+                {!flipLeft && (
+                  <div
+                    className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0"
+                    style={{
+                      borderLeft: '7px solid transparent',
+                      borderRight: '7px solid transparent',
+                      borderTop: '7px solid rgba(255,255,255,0.97)',
+                    }}
+                  />
+                )}
+                {/* Caret for right-positioned tooltip */}
+                {flipLeft && (
+                  <div
+                    className="absolute left-full top-1/2 -translate-y-1/2 w-0 h-0"
+                    style={{
+                      borderTop: '7px solid transparent',
+                      borderBottom: '7px solid transparent',
+                      borderLeft: '7px solid rgba(255,255,255,0.97)',
+                    }}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </section>
   );
 }

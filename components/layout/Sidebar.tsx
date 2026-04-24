@@ -31,7 +31,7 @@ const LucideIcon = ({ name, className }: { name: string, className?: string }) =
   };
   
   const IconComponent = IconNames[name] || LucideIcons.Box;
-  return <IconComponent className={cn('w-5 h-5 flex-shrink-0', className)} />;
+  return <IconComponent className={cn('w-5 h-5 shrink-0', className)} />;
 };
 
 export const Sidebar = () => {
@@ -71,10 +71,10 @@ export const Sidebar = () => {
   return (
     <div className={cn(
       "h-screen fixed left-0 top-0 border-r border-border bg-background flex flex-col transition-all duration-300 z-50",
-      isSidebarCollapsed ? "w-[72px]" : "w-[260px]"
+      isSidebarCollapsed ? "w-18" : "w-65"
     )}>
-      <div className={cn("flex flex-shrink-0 items-center p-4 border-b border-border/50", isSidebarCollapsed ? "justify-center" : "justify-between")}>
-        {!isSidebarCollapsed && <span className="text-xl font-display font-bold tracking-tight text-white flex-1 overflow-hidden pointer-events-none">Recraft SaaS</span>}
+      <div className={cn("flex shrink-0 items-center p-4 border-b border-border/50", isSidebarCollapsed ? "justify-center" : "justify-between")}>
+        {!isSidebarCollapsed && <span className="text-xl font-display font-black uppercase tracking-[0.16em] text-white flex-1 overflow-hidden pointer-events-none">RECREATE</span>}
         <Button variant="ghost" size="icon" onClick={toggleSidebar} className="shrink-0 active:scale-95 transition-transform text-white/70 hover:text-white">
           <LucideIcons.PanelLeftClose className={cn("w-5 h-5 transition-transform", isSidebarCollapsed && "rotate-180")} />
         </Button>

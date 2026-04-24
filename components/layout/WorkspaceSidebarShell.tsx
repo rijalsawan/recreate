@@ -86,11 +86,10 @@ export function WorkspaceSidebarShell({
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       <aside className="w-55 shrink-0 border-r border-border bg-background flex flex-col h-full">
         <div className="p-4 border-b border-border/50">
-          <a href="/" className="flex items-center gap-2 group mb-4">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-display font-bold text-base text-white">Recraft SaaS</span>
+          <a href="/" className="group mb-4 inline-flex items-center">
+            <span className="font-display font-black uppercase tracking-[0.16em] text-base text-white group-hover:text-white/85 transition-colors">
+              RECREATE
+            </span>
           </a>
 
           <Button

@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { Sparkles, X, Code2, Link2 } from 'lucide-react';
+import { X, Code2, Link2 } from 'lucide-react';
 
 export const Footer = () => {
   return (
@@ -8,11 +8,8 @@ export const Footer = () => {
       <div className="max-w-7xl mx-auto px-6 lg:px-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-10 mb-16">
           <div className="col-span-2 md:col-span-1">
-            <Link href="/" className="flex items-center gap-2 mb-4 group">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <span className="font-display font-bold tracking-tight text-xl text-white">Recraft SaaS</span>
+            <Link href="/" className="mb-4 inline-flex items-center group">
+              <span className="font-display font-black uppercase tracking-[0.16em] text-lg text-white group-hover:text-white/85 transition-colors">RECREATE</span>
             </Link>
             <p className="text-muted-foreground text-sm max-w-xs leading-relaxed mb-6">
               The creative suite built for designers. Generate, edit, vectorize, and upscale AI images with 15 professional tools.
@@ -61,7 +58,7 @@ export const Footer = () => {
         </div>
         
         <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <p>© {new Date().getFullYear()} Recraft SaaS Inc. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} RECREATE Inc. All rights reserved.</p>
           <div className="flex gap-4">
             <span className="flex items-center gap-1">
               <div className="w-2 h-2 rounded-full bg-success"></div> Systems Operational

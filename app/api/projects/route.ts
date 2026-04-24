@@ -2,13 +2,55 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthSession } from '@/lib/api-helpers';
 import { prisma } from '@/lib/prisma';
 
+type GeneratedImagePreview = {
+  thumbnailUrl: string | null;
+  imageUrl: string;
+};
+
+type ProjectCardRecord = {
+  id: string;
+  name: string;
+  thumbnail: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  generatedImages: GeneratedImagePreview[];
+};
+
 const projectCardSelect = {
   id: true,
   name: true,
   thumbnail: true,
   createdAt: true,
   updatedAt: true,
+  generatedImages: {
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: {
+      thumbnailUrl: true,
+      imageUrl: true,
+    },
+  },
 } as const;
+
+function resolveProjectCard(project: ProjectCardRecord) {
+  const latestGenerated = project.generatedImages[0];
+  const resolvedThumbnail =
+    (typeof project.thumbnail === 'string' && project.thumbnail.trim().length > 0 ? project.thumbnail : null) ??
+    (typeof latestGenerated?.thumbnailUrl === 'string' && latestGenerated.thumbnailUrl.trim().length > 0
+      ? latestGenerated.thumbnailUrl
+      : null) ??
+    (typeof latestGenerated?.imageUrl === 'string' && latestGenerated.imageUrl.trim().length > 0
+      ? latestGenerated.imageUrl
+      : null);
+
+  return {
+    id: project.id,
+    name: project.name,
+    thumbnail: resolvedThumbnail,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
+}
 
 // GET /api/projects — list user's projects
 export async function GET(request: NextRequest) {
@@ -18,7 +60,7 @@ export async function GET(request: NextRequest) {
   const scope = new URL(request.url).searchParams.get('scope') ?? 'my';
   const shareDelegate = (prisma as unknown as {
     projectShare?: {
-      findMany?: (args: unknown) => Promise<Array<{ project: { id: string; name: string; thumbnail: string | null; createdAt: Date; updatedAt: Date } | null }>>;
+      findMany?: (args: unknown) => Promise<Array<{ project: ProjectCardRecord | null }>>;
     };
   }).projectShare;
 
@@ -41,7 +83,7 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      const projects = shares.flatMap((share) => (share.project ? [share.project] : []));
+      const projects = shares.flatMap((share) => (share.project ? [resolveProjectCard(share.project)] : []));
 
       return NextResponse.json(projects);
     } catch {
@@ -60,7 +102,7 @@ export async function GET(request: NextRequest) {
         select: projectCardSelect,
       });
 
-      return NextResponse.json(projects);
+      return NextResponse.json(projects.map((project) => resolveProjectCard(project as ProjectCardRecord)));
     } catch {
       return NextResponse.json([]);
     }
@@ -76,7 +118,7 @@ export async function GET(request: NextRequest) {
       select: projectCardSelect,
     });
 
-    return NextResponse.json(projects);
+    return NextResponse.json(projects.map((project) => resolveProjectCard(project as ProjectCardRecord)));
   } catch {
     // Fallback for environments where the new shared columns are not yet available.
     const projects = await prisma.project.findMany({
@@ -85,7 +127,7 @@ export async function GET(request: NextRequest) {
       select: projectCardSelect,
     });
 
-    return NextResponse.json(projects);
+    return NextResponse.json(projects.map((project) => resolveProjectCard(project as ProjectCardRecord)));
   }
 }
 

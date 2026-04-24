@@ -12,7 +12,7 @@ const plusJakarta = Plus_Jakarta_Sans({ subsets: ['latin'], variable: '--font-pl
 const spaceMono = Space_Mono({ subsets: ['latin'], variable: '--font-space-mono', weight: ['400', '700'] });
 
 export const metadata: Metadata = {
-  title: 'Recraft SaaS — AI Image Suite',
+  title: 'Recreate — AI Image Suite',
   description: 'Generate, edit, vectorize, and upscale AI images with 15 professional tools.',
 };
 

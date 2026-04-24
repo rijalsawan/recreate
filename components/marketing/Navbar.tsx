@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { Sparkles, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { useAuthModal } from '@/stores/useAuthModal';
 import { useSession, signOut } from 'next-auth/react';
 
@@ -29,11 +29,8 @@ export const Navbar = () => {
       scrolled ? "bg-background/80 backdrop-blur-md border-border/50 py-3" : "bg-transparent py-5"
     )}>
       <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center group-hover:scale-105 transition-transform">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-display font-bold tracking-tight text-xl text-white">Recraft SaaS</span>
+        <Link href="/" className="group">
+          <span className="font-display font-black uppercase tracking-[0.16em] text-lg text-white group-hover:text-white/85 transition-colors">RECREATE</span>
         </Link>
         
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">

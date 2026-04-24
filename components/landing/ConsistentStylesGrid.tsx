@@ -34,7 +34,7 @@ export default function ConsistentStylesGrid({ images }: ConsistentStylesGridPro
       <div className="text-center mb-4 max-w-4xl mx-auto">
         <h2
           className="font-display font-black uppercase text-white leading-[0.9]"
-          style={{ fontSize: 'clamp(2.4rem, 6.5vw, 6rem)' }}
+          style={{ fontSize: 'clamp(1.7rem, 6.5vw, 6rem)' }}
         >
           CONSISTENT STYLES
           <br />
@@ -47,9 +47,25 @@ export default function ConsistentStylesGrid({ images }: ConsistentStylesGridPro
         </p>
       </div>
 
-      {/* Bento grid — 5 cols, 2 rows, center spans 2 rows */}
+      {/* ── Mobile grid: 3×3 equal cells ──────────────────────── */}
       <div
-        className="mx-auto mt-10"
+        className="lg:hidden mx-auto mt-8 md:grid sm:grid max-sm:grid"
+        style={{
+          maxWidth: '600px',
+          
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateRows: 'repeat(3, clamp(100px, 28vw, 200px))',
+          gap: '5px',
+        }}
+      >
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+          <Cell key={i} index={i} />
+        ))}
+      </div>
+
+      {/* ── Desktop bento: 5 cols, 2 rows, center spans 2 rows ─ */}
+      <div
+        className="hidden lg:block mx-auto mt-10"
         style={{ maxWidth: '1400px' }}
       >
         <div

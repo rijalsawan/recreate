@@ -1,6 +1,8 @@
 import React from 'react';
 import Hero from '@/components/landing/Hero';
 import PromptReveal from '@/components/landing/PromptReveal';
+import type { PromptPoint } from '@/components/landing/PromptReveal';
+import { prisma } from '@/lib/prisma';
 import GalleryCarousel from '@/components/landing/GalleryCarousel';
 import VectorCarousel from '@/components/landing/VectorCarousel';
 import PhotorealCarousel from '@/components/landing/PhotorealCarousel';
@@ -16,6 +18,20 @@ function compact(v: (string | null)[]): string[] {
 
 export default async function LandingPage() {
   const data = await getLandingImages();
+
+  // Fetch prompt-reveal-points server-side so ALL visitors see admin-configured data
+  let promptPoints: PromptPoint[] | null = null;
+  try {
+    const configRow = await prisma.landingConfig.findUnique({ where: { key: 'prompt-reveal-points' } });
+    if (configRow?.value) {
+      const val = configRow.value as { points?: unknown };
+      if (Array.isArray(val.points) && val.points.length > 0) {
+        promptPoints = val.points as PromptPoint[];
+      }
+    }
+  } catch {
+    // silently use defaults
+  }
 
   const heroImages     = compact([data['hero-1'], data['hero-2'], data['hero-3']]);
   const galleryImages  = compact([data['gallery-1'], data['gallery-2'], data['gallery-3']]);
@@ -38,7 +54,7 @@ export default async function LandingPage() {
   return (
     <>
       <Hero images={heroOptimized} />
-      <PromptReveal image={promptReveal || null} />
+      <PromptReveal image={promptReveal || null} initialPoints={promptPoints} />
       <GalleryCarousel images={galleryOptimized} />
       <VectorCarousel images={vectorOptimized} />
       <PhotorealCarousel images={photorealOptimized} />

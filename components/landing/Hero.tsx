@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { gsap } from '@/lib/gsap';
 import { useAuthModal } from '@/stores/useAuthModal';
-import Link from 'next/link';
+import { useRestrictedDevice } from '@/hooks/useRestrictedDevice';
 
 interface HeroProps {
   images: string[];
@@ -19,10 +21,19 @@ const FALLBACK_GRADIENTS = [
 export default function Hero({ images }: HeroProps) {
   const [current, setCurrent] = useState(0);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [isPhoneViewport, setIsPhoneViewport] = useState(false);
+  const [phoneHeroHeightPx, setPhoneHeroHeightPx] = useState<number | null>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchBlockedRef = useRef(false);
+  const lastTouchTsRef = useRef(0);
   const { openModal } = useAuthModal();
+  const { isRestrictedDevice, isDeviceCheckReady } = useRestrictedDevice();
+  const restrictAuthAccess = !isDeviceCheckReady || isRestrictedDevice;
 
+  const { data: session, status } = useSession();
+  const isLoggedIn = status === 'authenticated' && session?.user;
   const slides: Array<{ key: string; image?: string; background?: string }> = images.length > 0
     ? images.map((src, index) => ({ key: `image-${index}-${src}`, image: src }))
     : FALLBACK_GRADIENTS.map((background, index) => ({ key: `fallback-${index}`, background }));
@@ -54,7 +65,45 @@ export default function Hero({ images }: HeroProps) {
     return () => media.removeListener(sync);
   }, []);
 
-  // Auto-advance
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const sync = () => setIsPhoneViewport(media.matches);
+    sync();
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
+  // Strict mobile lock: set once and only recalc on orientation changes.
+  useEffect(() => {
+    if (!isPhoneViewport) {
+      setPhoneHeroHeightPx(null);
+      return;
+    }
+
+    const updateLockedHeight = () => {
+      const navOffsetPx = 100;
+      const locked = Math.max(420, Math.min(620, window.innerHeight - navOffsetPx));
+      setPhoneHeroHeightPx(locked);
+    };
+
+    updateLockedHeight();
+
+    const handleOrientation = () => {
+      window.setTimeout(updateLockedHeight, 180);
+    };
+
+    window.addEventListener('orientationchange', handleOrientation);
+    return () => {
+      window.removeEventListener('orientationchange', handleOrientation);
+    };
+  }, [isPhoneViewport]);
+
   useEffect(() => {
     if (count <= 1 || prefersReducedMotion) return;
     timerRef.current = setTimeout(next, 6000);
@@ -68,6 +117,28 @@ export default function Hero({ images }: HeroProps) {
     if (prefersReducedMotion || !textRef.current) return;
     gsap.from(textRef.current, { y: 24, opacity: 0, duration: 0.9, delay: 0.35, ease: 'power3.out' });
   }, [prefersReducedMotion]);
+
+  const isInteractiveTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest('button, a, input, textarea, select, [role="button"]'));
+  };
+
+  const handleButtonTouchEnd = (
+    event: React.TouchEvent<HTMLButtonElement>,
+    action: () => void,
+  ) => {
+    lastTouchTsRef.current = Date.now();
+    event.preventDefault();
+    action();
+  };
+
+  const handleButtonClick = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    action: () => void,
+  ) => {
+    if (Date.now() - lastTouchTsRef.current < 600) return;
+    action();
+  };
 
   return (
     <section className="bg-black">
@@ -89,8 +160,48 @@ export default function Hero({ images }: HeroProps) {
         {/* ── Carousel card ──────────────────────────────────────── */}
         <div className="px-4 sm:px-8 md:px-10 pt-4 pb-10">
           <div
-            className="relative rounded-[20px] overflow-hidden w-full"
-            style={{ height: 'clamp(420px, calc(100svh - 168px), 920px)' }}
+            className="relative rounded-[20px] overflow-hidden w-full lg:max-w-400 lg:mx-auto"
+            style={{
+              height: isPhoneViewport
+                ? phoneHeroHeightPx
+                  ? `${phoneHeroHeightPx}px`
+                  : 'clamp(420px, calc(100svh - 92px), 620px)'
+                : 'clamp(420px, calc(100dvh - 168px), 920px)',
+              transform: isPhoneViewport ? 'none' : 'translateZ(0)',
+              WebkitTransform: isPhoneViewport ? 'none' : 'translateZ(0)',
+              willChange: isPhoneViewport ? 'auto' : 'transform',
+              touchAction: 'pan-y',
+            }}
+            onTouchStart={(e) => {
+              touchBlockedRef.current = isInteractiveTarget(e.target);
+              if (touchBlockedRef.current) {
+                touchStartX.current = null;
+                return;
+              }
+              touchStartX.current = e.touches[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(e) => {
+              if (touchBlockedRef.current || isInteractiveTarget(e.target)) {
+                touchStartX.current = null;
+                touchBlockedRef.current = false;
+                return;
+              }
+              if (touchStartX.current === null) return;
+              const endX = e.changedTouches[0]?.clientX;
+              if (typeof endX !== 'number') {
+                touchStartX.current = null;
+                touchBlockedRef.current = false;
+                return;
+              }
+              const diff = touchStartX.current - endX;
+              if (Math.abs(diff) > 40) { if (diff > 0) next(); else prev(); }
+              touchStartX.current = null;
+              touchBlockedRef.current = false;
+            }}
+            onTouchCancel={() => {
+              touchStartX.current = null;
+              touchBlockedRef.current = false;
+            }}
           >
             <div className="absolute inset-0 overflow-hidden">
               <div
@@ -112,7 +223,7 @@ export default function Hero({ images }: HeroProps) {
                       <img
                         src={slide.image}
                         alt=""
-                        className="w-full h-full lg:object-contain max-sm:object-cover"
+                        className="w-full h-full object-cover"
                         loading={i === 0 ? 'eager' : 'lazy'}
                         fetchPriority={i === 0 ? 'high' : 'low'}
                         decoding={i === 0 ? 'sync' : 'async'}
@@ -138,25 +249,53 @@ export default function Hero({ images }: HeroProps) {
                 className="font-display font-black uppercase italic text-white leading-[0.88] select-none"
                 style={{ fontSize: 'clamp(2.6rem, 7vw, 5.8rem)' }}
               >
-                {/* {/* donot change line 141 i ddid it manually for responsiveness */}
                 <span className="max-sm:text-[2rem]">RECREATE</span>
                 <br />
                 <span className="not-italic font-bold tracking-tight">ANYTHING.</span><br />
-                {/* donot change line 144 i ddid it manually for responsiveness */}
-                <span className="max-sm:text-[2rem]">INSTANTLY.</span> 
+                <span className="max-sm:text-[2rem]">INSTANTLY.</span>
               </h1>
               <p className="mt-4 text-white/65 text-sm md:text-base max-w-[320px] leading-relaxed select-none">
                 The fastest way to generate, edit, and export production&#8209;quality visuals — from prompt to pixel.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Link href="/projects">
-                <button
-                  type="button"
-                  className="h-11 px-7 rounded-full bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-colors shadow-[0_0_28px_-4px_rgba(124,58,237,0.75)]"
-                >
-                  Start creating
-                </button>
-                </Link>
+                <div className="flex flex-wrap items-center gap-3">
+                  {restrictAuthAccess ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled
+                        className="px-5 py-2 rounded-full bg-white/10 text-white/70 text-sm font-semibold cursor-not-allowed"
+                      >
+                        Try it on desktop
+                      </button>
+                      
+                    </>
+                  ) : isLoggedIn ? (
+                    <Link
+                      href="/projects"
+                      className="px-5 py-2 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
+                    >
+                      My Projects
+                    </Link>
+                  ) : (
+                    <>
+                      <button
+                        onClick={(e) => handleButtonClick(e, () => openModal('login'))}
+                        onTouchEnd={(e) => handleButtonTouchEnd(e, () => openModal('login'))}
+                        className="touch-manipulation text-sm font-medium text-white/60 hover:text-white transition-colors px-3 py-2"
+                      >
+                        Sign in
+                      </button>
+                      <button
+                        onClick={(e) => handleButtonClick(e, () => openModal('signup'))}
+                        onTouchEnd={(e) => handleButtonTouchEnd(e, () => openModal('signup'))}
+                        className="touch-manipulation px-5 py-2 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
+                      >
+                        Try Recreate Studio
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -167,9 +306,10 @@ export default function Hero({ images }: HeroProps) {
                   <button
                     key={i}
                     type="button"
-                    onClick={() => goTo(i)}
+                    onClick={(e) => handleButtonClick(e, () => goTo(i))}
+                    onTouchEnd={(e) => handleButtonTouchEnd(e, () => goTo(i))}
                     aria-label={`Go to slide ${i + 1}`}
-                    className={`h-1.5 rounded-full transition-all duration-300 ${
+                    className={`touch-manipulation h-1.5 rounded-full transition-all duration-300 ${
                       i === current ? 'w-6 bg-white' : 'w-1.5 bg-white/35 hover:bg-white/55'
                     }`}
                   />
@@ -182,19 +322,21 @@ export default function Hero({ images }: HeroProps) {
               <>
                 <button
                   type="button"
-                  onClick={prev}
+                  onClick={(e) => handleButtonClick(e, prev)}
+                  onTouchEnd={(e) => handleButtonTouchEnd(e, prev)}
                   aria-label="Previous slide"
-                  className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full border border-white/12 bg-black/30 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/50 hover:border-white/25 transition-all"
+                  className="touch-manipulation absolute left-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-white/12 bg-black/30 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/50 hover:border-white/25 transition-all"
                 >
-                  <ChevronLeft className="w-5 h-5" />
+                  <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 <button
                   type="button"
-                  onClick={next}
+                  onClick={(e) => handleButtonClick(e, next)}
+                  onTouchEnd={(e) => handleButtonTouchEnd(e, next)}
                   aria-label="Next slide"
-                  className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full border border-white/12 bg-black/30 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/50 hover:border-white/25 transition-all"
+                  className="touch-manipulation absolute right-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-white/12 bg-black/30 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/50 hover:border-white/25 transition-all"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
               </>
             )}

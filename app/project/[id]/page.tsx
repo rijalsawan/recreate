@@ -6221,7 +6221,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       {/* Info note for TIFF/PDF/SVG */}
                       {(exportFormat === 'TIFF' || exportFormat === 'PDF' || exportFormat === 'SVG') && (
                         <p className="text-[11px] text-muted-foreground bg-white/4 rounded-lg px-3 py-2">
-                          {exportFormat === 'TIFF' ? 'TIFF exports as PNG — CMYK conversion requires server-side processing.' : exportFormat === 'PDF' ? 'PDF exports the image embedded in a single-page PDF document.' : 'SVG exports the original scalable vector file. Brush strokes and text are not composited.'}
+                          {exportFormat === 'TIFF' ? 'TIFF exports as PNG — CMYK conversion requires server-side processing.' : exportFormat === 'PDF' ? 'PDF exports the image embedded in a single-page PDF document.' : 'SVG keeps vector quality and includes your brush strokes, shapes, and text overlays.'}
                         </p>
                       )}
 
@@ -6232,17 +6232,237 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           if (exporting) return;
                           setExporting(true);
                           try {
-                            // ── SVG export: stream the original vector file directly ──
+                            // ── SVG export: keep vector base + overlay vector elements ──
                             if (exportFormat === 'SVG') {
                               const res = await fetch(`/api/proxy-image?url=${encodeURIComponent(selectedImage.url)}`);
                               if (!res.ok) throw new Error('Failed to fetch SVG');
                               const svgText = await res.text();
-                              const blob = new Blob([svgText], { type: 'image/svg+xml' });
+
+                              const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+                              const escapeXml = (value: string) =>
+                                value
+                                  .replace(/&/g, '&amp;')
+                                  .replace(/</g, '&lt;')
+                                  .replace(/>/g, '&gt;')
+                                  .replace(/"/g, '&quot;')
+                                  .replace(/'/g, '&apos;');
+                              const normalizeColor = (value: string | undefined, fallback: string) => {
+                                if (!value) return fallback;
+                                const trimmed = value.trim();
+                                if (!trimmed) return fallback;
+                                if (/^#?[0-9a-fA-F]{3}$/.test(trimmed) || /^#?[0-9a-fA-F]{6}$/.test(trimmed) || /^#?[0-9a-fA-F]{8}$/.test(trimmed)) {
+                                  return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+                                }
+                                return fallback;
+                              };
+                              const fmt = (value: number) => {
+                                if (!Number.isFinite(value)) return '0';
+                                const rounded = Number(value.toFixed(3));
+                                return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+                              };
+                              const toBase64 = (value: string) => {
+                                const bytes = new TextEncoder().encode(value);
+                                let binary = '';
+                                const chunkSize = 0x8000;
+                                for (let i = 0; i < bytes.length; i += chunkSize) {
+                                  const chunk = bytes.subarray(i, i + chunkSize);
+                                  binary += String.fromCharCode(...chunk);
+                                }
+                                return btoa(binary);
+                              };
+                              const parseSize = (value: string | null) => {
+                                if (!value) return null;
+                                const parsed = Number.parseFloat(value);
+                                return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+                              };
+
+                              const imgW = selectedImage.width;
+                              const imgH = selectedImage.height;
+                              const imgOriginX = selectedImage.x;
+                              const imgOriginY = selectedImage.y;
+
+                              const parser = new DOMParser();
+                              const parsedSvgDoc = parser.parseFromString(svgText, 'image/svg+xml');
+                              const svgRoot = parsedSvgDoc.documentElement;
+                              let sourceW = parseSize(svgRoot?.getAttribute('width'));
+                              let sourceH = parseSize(svgRoot?.getAttribute('height'));
+                              const viewBoxAttr = svgRoot?.getAttribute('viewBox');
+                              if ((!sourceW || !sourceH) && viewBoxAttr) {
+                                const vb = viewBoxAttr
+                                  .trim()
+                                  .split(/[\s,]+/)
+                                  .map((value) => Number.parseFloat(value));
+                                if (vb.length === 4 && Number.isFinite(vb[2]) && Number.isFinite(vb[3]) && vb[2] > 0 && vb[3] > 0) {
+                                  sourceW = vb[2];
+                                  sourceH = vb[3];
+                                }
+                              }
+                              if (!sourceW || !sourceH) {
+                                sourceW = imgW;
+                                sourceH = imgH;
+                              }
+
+                              const coverScale = Math.max(imgW / sourceW, imgH / sourceH);
+                              const renderW = sourceW * coverScale;
+                              const renderH = sourceH * coverScale;
+                              const renderX = (imgW - renderW) / 2;
+                              const renderY = (imgH - renderH) / 2;
+
+                              const overlayElements: string[] = [];
+
+                              for (const stroke of brushStrokes) {
+                                const kind = stroke.kind || 'brush';
+                                if (!stroke.points || stroke.points.length === 0) continue;
+
+                                const points = stroke.points.map((point) => ({
+                                  x: point.x + stroke.offsetX - imgOriginX,
+                                  y: point.y + stroke.offsetY - imgOriginY,
+                                }));
+
+                                const xs = points.map((point) => point.x);
+                                const ys = points.map((point) => point.y);
+                                const minX = Math.min(...xs) - stroke.size;
+                                const minY = Math.min(...ys) - stroke.size;
+                                const maxX = Math.max(...xs) + stroke.size;
+                                const maxY = Math.max(...ys) + stroke.size;
+                                if (maxX < 0 || maxY < 0 || minX > imgW || minY > imgH) continue;
+
+                                const opacity = clamp01((stroke.opacity ?? 100) / 100);
+                                const strokeColor = normalizeColor(stroke.color, '#ffffff');
+                                const strokeWidth = Math.max(0.1, stroke.size);
+
+                                if (kind === 'brush') {
+                                  if (points.length === 1) {
+                                    const p = points[0];
+                                    overlayElements.push(
+                                      `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(strokeWidth / 2)}" fill="${strokeColor}" fill-opacity="${fmt(opacity)}" />`
+                                    );
+                                  } else {
+                                    const pathParts: string[] = [`M ${fmt(points[0].x)} ${fmt(points[0].y)}`];
+                                    for (let i = 1; i < points.length; i++) {
+                                      const prev = points[i - 1];
+                                      const curr = points[i];
+                                      const midX = (prev.x + curr.x) / 2;
+                                      const midY = (prev.y + curr.y) / 2;
+                                      pathParts.push(`Q ${fmt(prev.x)} ${fmt(prev.y)} ${fmt(midX)} ${fmt(midY)}`);
+                                    }
+                                    const last = points[points.length - 1];
+                                    pathParts.push(`L ${fmt(last.x)} ${fmt(last.y)}`);
+                                    overlayElements.push(
+                                      `<path d="${pathParts.join(' ')}" fill="none" stroke="${strokeColor}" stroke-width="${fmt(strokeWidth)}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${fmt(opacity)}" />`
+                                    );
+                                  }
+                                  continue;
+                                }
+
+                                const start = points[0];
+                                const end = points[points.length - 1] || start;
+
+                                if (kind === 'line') {
+                                  overlayElements.push(
+                                    `<line x1="${fmt(start.x)}" y1="${fmt(start.y)}" x2="${fmt(end.x)}" y2="${fmt(end.y)}" stroke="${strokeColor}" stroke-width="${fmt(strokeWidth)}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${fmt(opacity)}" fill="none" />`
+                                  );
+                                  continue;
+                                }
+
+                                if (kind === 'arrow') {
+                                  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+                                  const head = Math.max(10, stroke.size * 2.6);
+                                  const a1 = angle - Math.PI / 7;
+                                  const a2 = angle + Math.PI / 7;
+                                  const hx1 = end.x - head * Math.cos(a1);
+                                  const hy1 = end.y - head * Math.sin(a1);
+                                  const hx2 = end.x - head * Math.cos(a2);
+                                  const hy2 = end.y - head * Math.sin(a2);
+                                  overlayElements.push(
+                                    `<g stroke="${strokeColor}" stroke-width="${fmt(strokeWidth)}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${fmt(opacity)}" fill="none">` +
+                                      `<line x1="${fmt(start.x)}" y1="${fmt(start.y)}" x2="${fmt(end.x)}" y2="${fmt(end.y)}" />` +
+                                      `<line x1="${fmt(hx1)}" y1="${fmt(hy1)}" x2="${fmt(end.x)}" y2="${fmt(end.y)}" />` +
+                                      `<line x1="${fmt(hx2)}" y1="${fmt(hy2)}" x2="${fmt(end.x)}" y2="${fmt(end.y)}" />` +
+                                    `</g>`
+                                  );
+                                  continue;
+                                }
+
+                                if (kind === 'rectangle') {
+                                  const x = Math.min(start.x, end.x);
+                                  const y = Math.min(start.y, end.y);
+                                  const width = Math.abs(end.x - start.x);
+                                  const height = Math.abs(end.y - start.y);
+                                  if (width < 0.5 && height < 0.5) continue;
+                                  const hasFill = Boolean(stroke.fillColor);
+                                  const fillColor = normalizeColor(stroke.fillColor, '#ffffff');
+                                  const fillOpacity = fmt(clamp01(0.32 * opacity));
+                                  overlayElements.push(
+                                    `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(width)}" height="${fmt(height)}" stroke="${strokeColor}" stroke-width="${fmt(strokeWidth)}" stroke-opacity="${fmt(opacity)}" fill="${hasFill ? fillColor : 'none'}"${hasFill ? ` fill-opacity="${fillOpacity}"` : ''} />`
+                                  );
+                                  continue;
+                                }
+
+                                if (kind === 'ellipse') {
+                                  const cx = (start.x + end.x) / 2;
+                                  const cy = (start.y + end.y) / 2;
+                                  const rx = Math.abs(end.x - start.x) / 2;
+                                  const ry = Math.abs(end.y - start.y) / 2;
+                                  if (rx < 0.25 || ry < 0.25) continue;
+                                  const hasFill = Boolean(stroke.fillColor);
+                                  const fillColor = normalizeColor(stroke.fillColor, '#ffffff');
+                                  const fillOpacity = fmt(clamp01(0.32 * opacity));
+                                  overlayElements.push(
+                                    `<ellipse cx="${fmt(cx)}" cy="${fmt(cy)}" rx="${fmt(rx)}" ry="${fmt(ry)}" stroke="${strokeColor}" stroke-width="${fmt(strokeWidth)}" stroke-opacity="${fmt(opacity)}" fill="${hasFill ? fillColor : 'none'}"${hasFill ? ` fill-opacity="${fillOpacity}"` : ''} />`
+                                  );
+                                  continue;
+                                }
+                              }
+
+                              for (const txt of canvasTexts) {
+                                const localX = txt.x - imgOriginX;
+                                const localY = txt.y - imgOriginY;
+                                const textHeight = txt.height ?? txt.fontSize * txt.lineHeight * (txt.content.split('\n').length || 1);
+                                if (localX >= imgW || localX + txt.width <= 0 || localY >= imgH || localY + textHeight <= 0) continue;
+
+                                const textOpacity = clamp01(txt.opacity / 100);
+                                const textColor = normalizeColor(txt.color, '#ffffff');
+                                const textAnchor = txt.align === 'center' ? 'middle' : txt.align === 'right' ? 'end' : 'start';
+                                const drawX = txt.align === 'center' ? localX + txt.width / 2
+                                  : txt.align === 'right' ? localX + txt.width
+                                  : localX;
+                                const baselineY = localY + txt.fontSize;
+                                const lineHeightPx = txt.fontSize * txt.lineHeight;
+                                const lines = txt.content.split('\n');
+                                const tspans = lines.map((line, index) =>
+                                  `<tspan x="${fmt(drawX)}" dy="${index === 0 ? '0' : fmt(lineHeightPx)}">${escapeXml(line)}</tspan>`
+                                ).join('');
+
+                                overlayElements.push(
+                                  `<text x="${fmt(drawX)}" y="${fmt(baselineY)}" text-anchor="${textAnchor}" fill="${textColor}" fill-opacity="${fmt(textOpacity)}" font-family="${escapeXml(txt.fontFamily)}" font-size="${fmt(txt.fontSize)}" font-weight="${escapeXml(String(txt.fontWeight))}" lengthAdjust="spacingAndGlyphs">${tspans}</text>`
+                                );
+                              }
+
+                              const base64Svg = toBase64(svgText);
+                              const composedSvg = [
+                                `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(imgW)}" height="${fmt(imgH)}" viewBox="0 0 ${fmt(imgW)} ${fmt(imgH)}">`,
+                                `  <defs>`,
+                                `    <clipPath id="recreate-export-clip">`,
+                                `      <rect x="0" y="0" width="${fmt(imgW)}" height="${fmt(imgH)}" />`,
+                                `    </clipPath>`,
+                                `  </defs>`,
+                                `  <g clip-path="url(#recreate-export-clip)">`,
+                                `    <image href="data:image/svg+xml;base64,${base64Svg}" x="${fmt(renderX)}" y="${fmt(renderY)}" width="${fmt(renderW)}" height="${fmt(renderH)}" preserveAspectRatio="none" />`,
+                                `    <g id="recreate-overlays">`,
+                                ...overlayElements.map((el) => `      ${el}`),
+                                `    </g>`,
+                                `  </g>`,
+                                `</svg>`,
+                              ].join('\n');
+
+                              const blob = new Blob([composedSvg], { type: 'image/svg+xml;charset=utf-8' });
                               const a = document.createElement('a');
-                              a.href = URL.createObjectURL(blob);
+                              const downloadUrl = URL.createObjectURL(blob);
+                              a.href = downloadUrl;
                               a.download = `recraft-${selectedImage.id}.svg`;
                               a.click();
-                              URL.revokeObjectURL(a.href);
+                              URL.revokeObjectURL(downloadUrl);
                               return;
                             }
 

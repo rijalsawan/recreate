@@ -149,9 +149,8 @@ export default function Footer() {
       {/* ── Giant wordmark ────────────────────────────────────────── */}
       <div className="overflow-hidden leading-none select-none" aria-hidden="true">
         <p
-          className="font-display font-black uppercase text-white text-center"
+          className="font-display max-sm:text-[2rem] sm:text-[2rem]  font-black uppercase text-white text-center"
           style={{
-            fontSize: 'clamp(7rem, 22vw, 10rem)',
             lineHeight: 0.82,
             letterSpacing: '-0.02em',
           }}

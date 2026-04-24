@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { useAuthModal } from '@/stores/useAuthModal';
+import { useRestrictedDevice } from '@/hooks/useRestrictedDevice';
 
 interface StudioCTAProps {
   screenshot: string | null;
@@ -9,6 +10,22 @@ interface StudioCTAProps {
 
 export default function StudioCTA({ screenshot }: StudioCTAProps) {
   const { openModal } = useAuthModal();
+  const { isRestrictedDevice, isDeviceCheckReady } = useRestrictedDevice();
+  const restrictAuthAccess = !isDeviceCheckReady || isRestrictedDevice;
+  const lastTouchTsRef = useRef(0);
+
+  const handleTryFreeClick = () => {
+    if (restrictAuthAccess) return;
+    if (Date.now() - lastTouchTsRef.current < 600) return;
+    openModal('signup');
+  };
+
+  const handleTryFreeTouchEnd = (event: React.TouchEvent<HTMLButtonElement>) => {
+    if (restrictAuthAccess) return;
+    lastTouchTsRef.current = Date.now();
+    event.preventDefault();
+    openModal('signup');
+  };
 
   return (
     <section
@@ -19,7 +36,7 @@ export default function StudioCTA({ screenshot }: StudioCTAProps) {
         {/* Headline */}
         <h2
           className="font-display font-black uppercase text-white leading-[0.88] mb-5"
-          style={{ fontSize: 'clamp(2.6rem, 7vw, 6rem)' }}
+          style={{ fontSize: 'clamp(1.7rem, 7vw, 6rem)' }}
         >
           TRY IN{' '}
           <em className="italic">RECREATE</em>
@@ -34,11 +51,23 @@ export default function StudioCTA({ screenshot }: StudioCTAProps) {
 
         <button
           type="button"
-          onClick={() => openModal('signup')}
-          className="inline-flex items-center h-12 px-8 rounded-full bg-black text-white font-semibold text-sm hover:bg-neutral-900 transition-colors shadow-lg mb-14"
+          onClick={handleTryFreeClick}
+          onTouchEnd={handleTryFreeTouchEnd}
+          disabled={restrictAuthAccess}
+          className={`touch-manipulation inline-flex items-center h-12 px-8 rounded-full text-white font-semibold text-sm transition-colors shadow-lg mb-3 ${
+            restrictAuthAccess
+              ? 'bg-white/20 text-white/70 cursor-not-allowed'
+              : 'bg-black hover:bg-neutral-900'
+          }`}
         >
-          Try it free
+          {restrictAuthAccess ? 'Desktop-only Access' : 'Try it free'}
         </button>
+
+        {restrictAuthAccess && (
+          <p className="text-white/70 text-sm max-w-lg mx-auto leading-relaxed mb-11">
+            You can browse this landing page on phone/tablet, but sign in and Projects/Canvas/Studio are desktop-only.
+          </p>
+        )}
 
         {/* App screenshot */}
         <div className="relative mx-auto" style={{ maxWidth: '760px' }}>

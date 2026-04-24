@@ -22,13 +22,18 @@ export function SmoothScrollProvider({ children }: SmoothScrollProviderProps) {
     const prefersReducedMotion = window.matchMedia(
       '(prefers-reduced-motion: reduce)',
     ).matches;
+    const isPhoneViewport = window.matchMedia('(max-width: 767px)').matches;
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
 
-    if (prefersReducedMotion) return;
+    // Keep native scrolling on phones to avoid touch interaction conflicts.
+    if (prefersReducedMotion || (isPhoneViewport && isCoarsePointer)) return;
 
     const lenis = new Lenis({
       duration: 1.2,
       easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       allowNestedScroll: true,
+      // Touch input should stay native so taps/swipes on UI controls remain reliable.
+      virtualScroll: ({ event }: { event: Event }) => !event.type.startsWith('touch'),
     });
 
     lenisRef.current = lenis;

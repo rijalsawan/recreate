@@ -64,7 +64,7 @@ export default function TestimonialsScroller() {
       <div className="text-center mb-12 px-6">
         <h2
           className="font-display font-black uppercase italic text-white leading-[0.88]"
-          style={{ fontSize: 'clamp(2.4rem, 6vw, 5.5rem)' }}
+          style={{ fontSize: 'clamp(1.7rem, 6vw, 5.5rem)' }}
         >
           LOVED BY
           <br />
