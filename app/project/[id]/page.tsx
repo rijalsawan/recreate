@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChevronDown, ChevronRight, ChevronLeft, ChevronUp, Hexagon, History,
   MousePointer2, Hand, Shapes, Frame, Type, Upload, Undo2, Redo2,
-  Image as ImageIcon, Wand2, Box, Sparkles, Paperclip, ArrowUp,
+  Image as ImageIcon, Box, Sparkles, Paperclip, ArrowUp,
   Palette, Plus, Minus, Trash2,
   PanelLeft, Sidebar as SidebarIcon, X, Maximize, Combine, Eraser,
   Search, Check, Zap, Rocket, Disc3, Shirt,
@@ -780,6 +780,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [selectedPalette, setSelectedPalette] = useState<string[] | null>(null);
   const [displayedPalettes, setDisplayedPalettes] = useState<{ name: string; colors: string[] }[]>(() => pick5Palettes(null));
   const [attachments, setAttachments] = useState<File[]>([]);
+  const attachmentPreviewUrls = useMemo(
+    () => attachments.map((file) => URL.createObjectURL(file)),
+    [attachments]
+  );
+
+  useEffect(() => {
+    return () => {
+      attachmentPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [attachmentPreviewUrls]);
 
   // Active tool
   const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'shapes' | 'frame' | 'text' | 'upload' | 'brush' | null>('select');
@@ -1286,6 +1296,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (selectedImageId) setContextImageId(selectedImageId);
   }, [selectedImageId]);
 
+  // Keep prompt context in sync with canvas selection UX:
+  // when image selection is cleared (sidebar disappears), clear context too.
+  useEffect(() => {
+    if (!selectedImageId && contextImageId && !useFrameContext) {
+      setContextImageId(null);
+    }
+  }, [selectedImageId, contextImageId, useFrameContext]);
+
   // Auto-set frame context when frame tool is activated
   useEffect(() => {
     if (isFrameActive) setUseFrameContext(true);
@@ -1572,7 +1590,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const SNAP_THRESHOLD = 6;
 
   // Mask drawing state (edit-area tool)
-  const [editAreaTool, setEditAreaTool] = useState<'lasso' | 'brush' | 'area' | 'wand'>('brush');
+  const [editAreaTool, setEditAreaTool] = useState<'lasso' | 'brush' | 'area'>('brush');
   // Right panel sub-view state
   type SubPanel = null | 'edit-area' | 'outpaint' | 'remix' | 'upscale' | 'variations' | 'adjust-colors' | 'export';
   const [activeSubPanel, setActiveSubPanel] = useState<SubPanel>(null);
@@ -1853,12 +1871,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
     // Left-click on empty canvas = deselect
     if (e.button === 0 && (e.target as HTMLElement).dataset?.canvas === 'bg') {
+      if (selectedImageId && contextImageId === selectedImageId) {
+        setContextImageId(null);
+      }
       setSelectedImageId(null);
       setSelectedStrokeId(null);
       setSelectedTextId(null);
       setEditingTextId(null);
     }
-  }, [activeTool, spaceHeld, drawMode, eraseDrawingAtPoint, addTextAtCanvasPoint, selectedImageId]);
+  }, [activeTool, spaceHeld, drawMode, eraseDrawingAtPoint, addTextAtCanvasPoint, selectedImageId, contextImageId]);
 
   const handleImageMouseDown = useCallback((e: React.MouseEvent, imgId: string) => {
     e.stopPropagation();
@@ -1905,7 +1926,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     const isEditAreaCursorTool = activeSubPanel === 'edit-area'
       && isImageSelected
-      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area' || editAreaTool === 'wand');
+      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area');
     const isCursorToolActive = ((activeTool === 'select' || activeTool === 'hand' || activeTool === 'text' || activeTool === 'brush' || activeTool === 'shapes') || isEditAreaCursorTool) && !spaceHeld;
     if (isCursorToolActive) {
       queueToolCursorPosition(e.clientX, e.clientY);
@@ -2237,7 +2258,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
     const isEditAreaCursorTool = activeSubPanel === 'edit-area'
       && isImageSelected
-      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area' || editAreaTool === 'wand');
+      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area');
     const isCursorToolActive = ((activeTool === 'select' || activeTool === 'hand' || activeTool === 'text' || activeTool === 'brush' || activeTool === 'shapes') || isEditAreaCursorTool) && !spaceHeld;
     if (!isCursorToolActive) {
       if (toolCursorRafRef.current !== null) {
@@ -2260,7 +2281,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   useEffect(() => {
     const isEditAreaCursorTool = activeSubPanel === 'edit-area'
       && isImageSelected
-      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area' || editAreaTool === 'wand');
+      && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area');
     if (((activeTool === 'select' || activeTool === 'hand' || activeTool === 'text' || activeTool === 'brush' || activeTool === 'shapes') || isEditAreaCursorTool) && !spaceHeld) return;
     setToolCursorVisible(false);
     resetHandleCursorState();
@@ -2281,7 +2302,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   const handleMaskMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.stopPropagation();
-    if (editAreaTool === 'wand') return;
     const canvas = maskCanvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -3593,7 +3613,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         handleGenerate();
       }
       // Escape to deselect
-      if (e.key === 'Escape') setSelectedImageId(null);
+      if (e.key === 'Escape') {
+        if (selectedImageId && contextImageId === selectedImageId) {
+          setContextImageId(null);
+        }
+        setSelectedImageId(null);
+      }
       // Undo: Cmd/Ctrl+Z
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); historyUndo(); return; }
       // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y
@@ -3606,6 +3631,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           pushHistory('Deleted image', next, null);
           return next;
         });
+        if (contextImageId === selectedImageId) {
+          setContextImageId(null);
+        }
         setSelectedImageId(null);
       }
       // Tool shortcuts
@@ -3619,7 +3647,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleGenerate, selectedImageId, historyUndo, historyRedo, pushHistory]);
+  }, [handleGenerate, selectedImageId, contextImageId, historyUndo, historyRedo, pushHistory]);
 
   // PixiCanvasBoard dispatches 'pixi:textadd' (bubbling) when the text tool clicks canvas/image.
   useEffect(() => {
@@ -3649,7 +3677,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   const isEditAreaCursorMode = activeSubPanel === 'edit-area'
     && isImageSelected
-    && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area' || editAreaTool === 'wand');
+    && (editAreaTool === 'lasso' || editAreaTool === 'brush' || editAreaTool === 'area');
   const isCanvasCustomCursorMode = ((activeTool === 'select' || activeTool === 'hand' || activeTool === 'text' || activeTool === 'brush' || activeTool === 'shapes') || isEditAreaCursorMode) && !spaceHeld;
   const shouldFadeToolCursor = isHandleCursorHover || isHandleCursorDragging;
   const isPixiNativeResizeCursorActive = isCanvasCustomCursorMode && isPixiHandleCursorHover;
@@ -6761,7 +6789,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       {/* Selection tools */}
                       <div className="flex flex-col gap-2">
                         <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-widest">Selection tools</span>
-                        <div className="grid grid-cols-4 gap-1.5">
+                        <div className="grid grid-cols-3 gap-1.5">
                           {/* Lasso */}
                           <button
                             onClick={() => setEditAreaTool('lasso')}
@@ -6802,17 +6830,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           >
                             <Square className="w-[15px] h-[15px]" />
                             Area
-                          </button>
-                          {/* Wand (premium) */}
-                          <button
-                            onClick={() => setShowUpgradeModal(true)}
-                            className="relative flex flex-col items-center gap-1.5 py-3 rounded-xl border border-white/8 bg-surface text-muted-foreground/50 transition-all hover:bg-white/5"
-                          >
-                            <Wand2 className="w-[15px] h-[15px]" />
-                            <span className="text-[10px] font-medium">Wand</span>
-                            <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-primary rounded-full flex items-center justify-center">
-                              <Star className="w-2 h-2 text-white fill-white" />
-                            </div>
                           </button>
                         </div>
                       </div>
@@ -7327,7 +7344,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </AnimatePresence>
 
           {/* Main Input */}
-          <div className="relative px-3 pt-1">
+          <div className="relative px-3 pt-1 overflow-hidden">
             <textarea
               ref={promptTextareaRef}
               value={prompt}
@@ -7349,12 +7366,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
             {/* Attachment thumbnails */}
             {attachments.length > 0 && (
-              <div className="flex items-center gap-2 pb-2">
+              <div className="flex items-center gap-2 pb-2 flex-wrap">
                 {attachments.map((file, i) => (
-                  <div key={i} className="relative group">
+                  <div key={`${file.name}-${file.lastModified}-${i}`} className="relative group shrink-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={URL.createObjectURL(file)}
+                      src={attachmentPreviewUrls[i]}
                       alt={file.name}
                       className="w-10 h-10 rounded-lg object-cover border border-white/10"
                     />
@@ -7535,7 +7552,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               )}
             </AnimatePresence>
 
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth relative z-10 w-full pb-1">
+            <div className={cn(
+              "flex items-center gap-2 scroll-smooth relative z-10 w-full pb-1",
+              attachments.length > 0 ? "overflow-x-hidden" : "overflow-x-auto no-scrollbar"
+            )}>
 
               {!isFrameActive && (
                 <>
@@ -7714,11 +7734,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           {isEditAreaCursorMode && editAreaTool === 'area' && (
             <div className="w-8 h-8 rounded-full bg-black/55 border border-white/20 shadow-[0_6px_18px_-6px_rgba(0,0,0,0.8)] flex items-center justify-center text-white">
               <Square className="w-4 h-4" />
-            </div>
-          )}
-          {isEditAreaCursorMode && editAreaTool === 'wand' && (
-            <div className="w-8 h-8 rounded-full bg-black/55 border border-white/20 shadow-[0_6px_18px_-6px_rgba(0,0,0,0.8)] flex items-center justify-center text-white">
-              <Wand2 className="w-4 h-4" />
             </div>
           )}
           {!isEditAreaCursorMode && activeTool === 'select' && (

@@ -3,7 +3,7 @@ export type PlanSlug = 'free' | 'pro' | 'business';
 export type BillingInterval = 'month' | 'year';
 
 export const FREE_DAILY_CREDITS = 30;
-export const FREE_DAILY_ACTION_LIMIT = 25;
+export const FREE_DAILY_ACTION_LIMIT = 15;
 export const FREE_DAILY_UPLOAD_LIMIT = 3;
 export const FREE_MAX_IMAGES_PER_REQUEST = 2;
 
@@ -15,8 +15,8 @@ export const FREE_ALLOWED_MODELS = [
 
 export const MONTHLY_PLAN_CREDITS: Record<DbPlan, number> = {
   FREE: 0,
-  PRO: 3000,
-  BUSINESS: 15000,
+  PRO: 5000,
+  BUSINESS: 10000,
 };
 
 export type PublicPlanCard = {
@@ -54,8 +54,8 @@ export const PUBLIC_PLAN_CARDS: ReadonlyArray<PublicPlanCard> = [
     slug: 'pro',
     name: 'Pro',
     description: 'For creators shipping work every day.',
-    monthlyPrice: 20,
-    yearlyPrice: 16,
+    monthlyPrice: 19.99,
+    yearlyPrice: 15.99,
     creditsLabel: `${MONTHLY_PLAN_CREDITS.PRO.toLocaleString()} monthly credits`,
     features: [
       'All generation and editing models',
@@ -71,8 +71,8 @@ export const PUBLIC_PLAN_CARDS: ReadonlyArray<PublicPlanCard> = [
     slug: 'business',
     name: 'Business',
     description: 'High volume credits and team workflows.',
-    monthlyPrice: 99,
-    yearlyPrice: 79,
+    monthlyPrice: 39.99,
+    yearlyPrice: 31.99,
     creditsLabel: `${MONTHLY_PLAN_CREDITS.BUSINESS.toLocaleString()} monthly credits`,
     features: [
       'Everything in Pro',
